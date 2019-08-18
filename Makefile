@@ -1,5 +1,5 @@
 CXX=clang++-9
-CXXFLAGS=-Wall -O2 -pthread -g
+CXXFLAGS=-Wall -O2 -pthread -g -std=c++11
 
 .PHONY: all
 all: alloc_test
