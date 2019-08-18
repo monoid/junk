@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <iostream>
 #include <vector>
+#include <stdexcept>
 #include <thread>
 #include <utility>
 
@@ -53,7 +54,7 @@ void ValidatePointers(std::vector<std::pair<char*, char*>>* data) {
             std::cerr << "FAILURE: " << std::endl
                       << (void*)(p->first) << " " << (void*)(p->second)  << std::endl
                       << (void*)(it->first) << " " << (void*)(it->second) << std::endl;
-            break;
+            throw std::runtime_error("Invalid pointers");
         }
     }
 }
