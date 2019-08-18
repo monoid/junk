@@ -82,6 +82,7 @@ int main() {
 
     MemorySingleton::PrintStat();
 
+#ifdef VALIDATE_POINTERS
     std::vector<std::pair<char*, char*>> pointers;
     // Alot...
     pointers.reserve(2*4*4000000);
@@ -90,5 +91,6 @@ int main() {
     AddPointers(&pointers, n3);
     AddPointers(&pointers, n4);
     ValidatePointers(&pointers);
+#endif
     return 0;
 }
