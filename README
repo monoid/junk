@@ -1,0 +1,4 @@
+Simple multi-thread memory allocator with C++ atomics.
+No deallocation at all.
+Slower than GLIBC malloc (as it uses per-thread pools and no thread contention).
+It's just an excersise.
