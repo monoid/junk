@@ -18,5 +18,5 @@ public:
         sbrk_stat.store(0);
     }
     static void* Allocate(std::size_t size);
-    static void PrintStat();
+    static void PrintStats();
 };
