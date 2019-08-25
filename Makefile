@@ -8,7 +8,7 @@ TEST_BIN=alloc_test
 .PHONY: all test
 all: $(TEST_BIN) $(MALLOC_LIB)
 
-$(MALLOC_LIB):
+$(MALLOC_LIB): alloc.cpp malloc_wrapper.cpp alloc.hpp
 	$(CXX) $(CXXFLAGS) -shared -fPIC -o $@ alloc.cpp malloc_wrapper.cpp
 
 $(TEST_BIN): alloc_test.cpp
