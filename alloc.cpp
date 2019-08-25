@@ -114,7 +114,7 @@ void* MemorySingleton::Allocate(std::size_t size) {
 }
 
 
-void MemorySingleton::PrintStat() {
+void MemorySingleton::PrintStats() {
     std::cerr << "sbrk size:  " << std::setw(18) << sbrk_stat.load() << std::endl
               << "alloc size: " << std::setw(18) << alloc_stat.load() << std::endl
               << "now free:   " << std::setw(18) << free_end.load() - free_begin.load() << std::endl;

@@ -1,4 +1,3 @@
-#include "alloc.hpp"
 #include <algorithm>
 #include <iostream>
 #include <vector>
@@ -15,10 +14,10 @@ struct List {
 void AllocateNodes(int id, int count, List** result) {
     List* list = nullptr;
     for (int i = 0; i < count; ++i) {
-        List* node = static_cast<List*>(MemorySingleton::Allocate(sizeof(List)));
+        List* node = static_cast<List*>(malloc(sizeof(List)));
         node->next = list;
         size_t payloadSize = 0;  // TODO
-        node->payload = MemorySingleton::Allocate(payloadSize);
+        node->payload = malloc(payloadSize);
         list = node;
         node->value = id;
     }
@@ -60,13 +59,12 @@ void ValidatePointers(std::vector<std::pair<char*, char*>>* data) {
 }
 
 int main() {
-    MemorySingleton::Init();
     List* n1;
     List* n2;
     List* n3;
     List* n4;
 
-    void *a = MemorySingleton::Allocate(255);
+    void *a = malloc(255);
     std::thread t1([&]() { AllocateNodes(1, 4000000, &n1); });
     std::thread t2([&]() { AllocateNodes(2, 4000000, &n2); });
     std::thread t3([&]() { AllocateNodes(3, 4000000, &n3); });
@@ -75,13 +73,11 @@ int main() {
     t2.join();
     t3.join();
     t4.join();
-    void *b = MemorySingleton::Allocate(100);
+    void *b = malloc(100);
 
     std::cerr << a << ' ' << b << std::endl;
     std::cerr << CheckList(n1, 1) << " " << CheckList(n2, 2) << std::endl;
     std::cerr << CheckList(n3, 3) << " " << CheckList(n4, 4) << std::endl;
-
-    MemorySingleton::PrintStat();
 
 #ifdef VALIDATE_POINTERS
     std::vector<std::pair<char*, char*>> pointers;
