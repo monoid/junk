@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <iomanip>
-#include <unistd.h>
+#include <sys/mman.h>
 
 constexpr std::size_t DEFAULT_ALLOC_SIZE = 64 * 1024;
 constexpr size_t ALIGN_SIZE = 8;
@@ -18,9 +18,6 @@ std::atomic<char*> MemorySingleton::free_begin;
 std::atomic<bool> MemorySingleton::in_alloc;
 std::atomic<std::size_t> MemorySingleton::alloc_stat;
 std::atomic<std::size_t> MemorySingleton::sbrk_stat;
-
-void* last_sbrk; // Useful for debug, as core seems to keep no sbrk()
-
 
 /**
  * Allocation size for sbrk.  sbrk is always called if requested
@@ -51,7 +48,7 @@ char* MemorySingleton::AllocSbrk(std::size_t size) {
     size_t allocSize = SbrkAllocSize(size);
     //std::cerr << "Sbrk size " << allocSize << " for " << size << std::endl;
     if (in_alloc.compare_exchange_weak(in_alloc_expected, true)) {
-        char* sbrk_new = static_cast<char*>(last_sbrk = sbrk(allocSize));
+        char* sbrk_new = static_cast<char*>(mmap(0, allocSize, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0));
         sbrk_stat.fetch_add(allocSize);
         if (sbrk_new == reinterpret_cast<void*>(-1)) {
             throw std::runtime_error("OOM");
