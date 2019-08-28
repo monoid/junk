@@ -1,12 +1,7 @@
 #include <cstddef>
 #include "alloc.hpp"
 
-static void init() __attribute__((constructor));
 static void finalize() __attribute__((destructor));
-
-void init() {
-   MemorySingleton::Init();
-}
 
 void finalize() {
    MemorySingleton::PrintStats();

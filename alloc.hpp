@@ -10,13 +10,6 @@ class MemorySingleton {
 
     static char* AllocSbrk(std::size_t size);
 public:
-    static void Init() {
-        free_end.store(nullptr);
-        free_begin.store(nullptr);
-        in_alloc.store(false);
-        alloc_stat.store(0);
-        sbrk_stat.store(0);
-    }
     static void* Allocate(std::size_t size);
     static void PrintStats();
 };

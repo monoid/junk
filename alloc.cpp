@@ -13,11 +13,11 @@ static_assert(!(ALIGN_SIZE & (ALIGN_SIZE - 1)),
 static_assert(DEFAULT_ALLOC_SIZE % ALIGN_SIZE == 0,
               "DEFAULT_ALLOC_SIZE has to be aligned to ALIGN_SIZE'd");
 
-std::atomic<char*> MemorySingleton::free_end;
-std::atomic<char*> MemorySingleton::free_begin;
-std::atomic<bool> MemorySingleton::in_alloc;
-std::atomic<std::size_t> MemorySingleton::alloc_stat;
-std::atomic<std::size_t> MemorySingleton::sbrk_stat;
+std::atomic<char*> MemorySingleton::free_end{0};
+std::atomic<char*> MemorySingleton::free_begin{0};
+std::atomic<bool> MemorySingleton::in_alloc{0};
+std::atomic<std::size_t> MemorySingleton::alloc_stat{0};
+std::atomic<std::size_t> MemorySingleton::sbrk_stat{0};
 
 /**
  * Allocation size for sbrk.  sbrk is always called if requested
