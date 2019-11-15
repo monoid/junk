@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering, spin_loop_hint};
 use std::cell::UnsafeCell;
 use std::ops::{Deref, DerefMut};
 
@@ -21,6 +21,7 @@ impl<T> AtomicMutex<T> {
 
     pub fn lock<'a>(self: &'a AtomicMutex<T>) -> AtomicMutexGuard<'a, T> {
 	while self.atomlock.compare_and_swap(false, true, Ordering::AcqRel) {
+	    spin_loop_hint()
 	}
 	AtomicMutexGuard {
 	    parent: self
