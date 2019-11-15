@@ -20,7 +20,7 @@ impl<T> AtomicMutex<T> {
     }
 
     pub fn lock<'a>(self: &'a AtomicMutex<T>) -> AtomicMutexGuard<'a, T> {
-	while self.atomlock.compare_and_swap(false, true, Ordering::AcqRel) {
+	while self.atomlock.swap(true, Ordering::AcqRel) {
 	    spin_loop_hint()
 	}
 	AtomicMutexGuard {
