@@ -7,19 +7,25 @@ pub struct AtomicMutex<T> {
     atomlock: AtomicBool,
 }
 
+unsafe impl<T: Send> Send for AtomicMutex<T> {
+}
+
+unsafe impl<T: Send> Sync for AtomicMutex<T> {
+}
+
 pub struct AtomicMutexGuard<'a, T> {
     parent: &'a AtomicMutex<T>
 }
 
 impl<T> AtomicMutex<T> {
-    pub fn new(value: T) -> AtomicMutex<T> {
-	AtomicMutex::<T> {
+    pub fn new(value: T) -> Self {
+	Self {
 	    value: UnsafeCell::<T>::new(value),
 	    atomlock: AtomicBool::new(false),
 	}
     }
 
-    pub fn lock<'a>(self: &'a AtomicMutex<T>) -> AtomicMutexGuard<'a, T> {
+    pub fn lock<'a>(self: &'a Self) -> AtomicMutexGuard<'a, T> {
 	while self.atomlock.swap(true, Ordering::AcqRel) {
 	    spin_loop_hint()
 	}
@@ -37,6 +43,7 @@ impl<T> Drop for AtomicMutexGuard<'_, T> {
 
 impl<T> Deref for AtomicMutexGuard<'_, T> {
     type Target = T;
+
     fn deref(&self) -> &T {
 	unsafe {
 	    & *self.parent.value.get()
@@ -54,10 +61,13 @@ impl<T> DerefMut for AtomicMutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::thread;
+
     #[test]
     fn it_works() {
 	assert_eq!(2 + 2, 4);
-        let mutex = AtomicMutex::<i32>::new(1);
+	let mutex = AtomicMutex::<i32>::new(1);
 	assert!(!mutex.atomlock.load(Ordering::Acquire));
 
 	{
@@ -80,5 +90,30 @@ mod tests {
 	}
 
 	assert!(!mutex.atomlock.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn test_arc() {
+	const REPEAT : i32 = 10000000;
+	let v = Arc::new(AtomicMutex::<i32>::new(0));
+
+	let (v1, v2) = (v.clone(), v.clone());
+	let th1 = thread::spawn(move || {
+	    for _i in 0..REPEAT {
+		let mut guard = v1.lock();
+		*guard += 1;
+	    }
+	});
+	let th2 = thread::spawn(move || {
+	    for _i in 0..REPEAT {
+		let mut guard = v2.lock();
+		*guard += 1;
+	    }
+	});
+	th1.join().unwrap();
+	th2.join().unwrap();
+
+	let guard = v.lock();
+	assert_eq!(*guard, 2 * REPEAT);
     }
 }
