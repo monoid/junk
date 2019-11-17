@@ -35,6 +35,14 @@ impl<T> AtomicMutex<T> {
     }
 }
 
+impl<T> Drop for AtomicMutex<T> {
+    fn drop(&mut self) {
+	unsafe {
+	    self.value.get().drop_in_place()
+	}
+    }
+}
+
 impl<T> Drop for AtomicMutexGuard<'_, T> {
     fn drop(&mut self) {
 	self.parent.atomlock.store(false, Ordering::Release);
