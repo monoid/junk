@@ -1,6 +1,6 @@
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering, spin_loop_hint};
 use std::cell::UnsafeCell;
 use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{spin_loop_hint, AtomicBool, AtomicI32, Ordering};
 
 ///
 /// Mutex
@@ -63,18 +63,16 @@ pub struct AtomicRwLock<T> {
     readercount: AtomicI32,
 }
 
-unsafe impl<T: Send> Send for AtomicRwLock<T> {
-}
+unsafe impl<T: Send> Send for AtomicRwLock<T> {}
 
-unsafe impl<T: Send> Sync for AtomicRwLock<T> {
-}
+unsafe impl<T: Send> Sync for AtomicRwLock<T> {}
 
 pub struct AtomicReaderRwLockGuard<'a, T> {
-    parent: &'a AtomicRwLock<T>
+    parent: &'a AtomicRwLock<T>,
 }
 
 pub struct AtomicWriterRwLockGuard<'a, T> {
-    parent: &'a AtomicRwLock<T>
+    parent: &'a AtomicRwLock<T>,
 }
 
 impl<T> AtomicRwLock<T> {
@@ -97,23 +95,19 @@ impl<T> AtomicRwLock<T> {
                 self.readercount.fetch_sub(1, Ordering::SeqCst);
                 continue;
             } else {
-                return AtomicReaderRwLockGuard {
-                    parent: self
-                }
+                return AtomicReaderRwLockGuard { parent: self };
             }
         }
     }
 
     pub fn writelock(&self) -> AtomicWriterRwLockGuard<T> {
         while self.writerlock.swap(true, Ordering::AcqRel) {
-           spin_loop_hint()
+            spin_loop_hint()
         }
         while self.readercount.load(Ordering::Acquire) != 0 {
-           spin_loop_hint()
+            spin_loop_hint()
         }
-        AtomicWriterRwLockGuard {
-           parent: self
-        }
+        AtomicWriterRwLockGuard { parent: self }
     }
 }
 
@@ -121,9 +115,7 @@ impl<T> Deref for AtomicReaderRwLockGuard<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        unsafe {
-            & *self.parent.value.get()
-        }
+        unsafe { &*self.parent.value.get() }
     }
 }
 
@@ -131,25 +123,19 @@ impl<T> Deref for AtomicWriterRwLockGuard<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        unsafe {
-            & *self.parent.value.get()
-        }
+        unsafe { &*self.parent.value.get() }
     }
 }
 
 impl<T> DerefMut for AtomicWriterRwLockGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut T {
-        unsafe {
-            &mut *self.parent.value.get()
-        }
+        unsafe { &mut *self.parent.value.get() }
     }
 }
 
 impl<T> Drop for AtomicRwLock<T> {
     fn drop(&mut self) {
-        unsafe {
-            self.value.get().drop_in_place()
-        }
+        unsafe { self.value.get().drop_in_place() }
     }
 }
 
@@ -260,7 +246,7 @@ mod tests {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let (stop1, stop2) = (stop_flag.clone(), stop_flag.clone());
 
-        const REPEAT : i32 = 100000000;
+        const REPEAT: i32 = 100000000;
         let v = Arc::new(AtomicRwLock::<Data>::new(Data { a: 0, b: 0 }));
 
         let (v1, v2, v3, v4) = (v.clone(), v.clone(), v.clone(), v.clone());
