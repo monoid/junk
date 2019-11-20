@@ -1,20 +1,18 @@
-use std::sync::atomic::{AtomicBool, Ordering, spin_loop_hint};
 use std::cell::UnsafeCell;
 use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{spin_loop_hint, AtomicBool, Ordering};
 
 pub struct AtomicMutex<T> {
     value: UnsafeCell<T>,
     atomlock: AtomicBool,
 }
 
-unsafe impl<T: Send> Send for AtomicMutex<T> {
-}
+unsafe impl<T: Send> Send for AtomicMutex<T> {}
 
-unsafe impl<T: Send> Sync for AtomicMutex<T> {
-}
+unsafe impl<T: Send> Sync for AtomicMutex<T> {}
 
 pub struct AtomicMutexGuard<'a, T> {
-    parent: &'a AtomicMutex<T>
+    parent: &'a AtomicMutex<T>,
 }
 
 impl<T> AtomicMutex<T> {
@@ -29,17 +27,13 @@ impl<T> AtomicMutex<T> {
         while self.atomlock.swap(true, Ordering::AcqRel) {
             spin_loop_hint()
         }
-        AtomicMutexGuard {
-            parent: self
-        }
+        AtomicMutexGuard { parent: self }
     }
 }
 
 impl<T> Drop for AtomicMutex<T> {
     fn drop(&mut self) {
-        unsafe {
-            self.value.get().drop_in_place()
-        }
+        unsafe { self.value.get().drop_in_place() }
     }
 }
 
@@ -53,16 +47,12 @@ impl<T> Deref for AtomicMutexGuard<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        unsafe {
-            & *self.parent.value.get()
-        }
+        unsafe { &*self.parent.value.get() }
     }
 }
 impl<T> DerefMut for AtomicMutexGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut T {
-        unsafe {
-            &mut *self.parent.value.get()
-        }
+        unsafe { &mut *self.parent.value.get() }
     }
 }
 
@@ -102,7 +92,7 @@ mod tests {
 
     #[test]
     fn test_arc() {
-        const REPEAT : i32 = 10000000;
+        const REPEAT: i32 = 10000000;
         let v = Arc::new(AtomicMutex::<i32>::new(0));
 
         let (v1, v2) = (v.clone(), v.clone());
