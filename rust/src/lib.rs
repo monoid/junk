@@ -133,12 +133,6 @@ impl<T> DerefMut for AtomicWriterRwLockGuard<'_, T> {
     }
 }
 
-impl<T> Drop for AtomicRwLock<T> {
-    fn drop(&mut self) {
-        unsafe { self.value.get().drop_in_place() }
-    }
-}
-
 impl<T> Drop for AtomicReaderRwLockGuard<'_, T> {
     fn drop(&mut self) {
         self.parent.readercount.fetch_sub(1, Ordering::SeqCst);
@@ -328,6 +322,24 @@ mod tests {
         assert_eq!(*counter.borrow(), 1);
         {
             let _mutex = AtomicMutex::new(counted);
+
+            assert_eq!(*counter.borrow(), 1);
+        }
+
+        assert_eq!(*counter.borrow(), 0);
+    }
+
+    #[test]
+    fn test_rwlock_drop() {
+        let counter = Rc::new(RefCell::new(0));
+
+        assert_eq!(*counter.borrow(), 0);
+
+        let counted = Counted::new(&counter);
+
+        assert_eq!(*counter.borrow(), 1);
+        {
+            let _mutex = AtomicRwLock::new(counted);
 
             assert_eq!(*counter.borrow(), 1);
         }
