@@ -23,17 +23,11 @@ impl<T> AtomicMutex<T> {
         }
     }
 
-    pub fn lock<'a>(self: &'a Self) -> AtomicMutexGuard<'a, T> {
+    pub fn lock(self: &Self) -> AtomicMutexGuard<'_, T> {
         while self.atomlock.swap(true, Ordering::AcqRel) {
             spin_loop_hint()
         }
         AtomicMutexGuard { parent: self }
-    }
-}
-
-impl<T> Drop for AtomicMutex<T> {
-    fn drop(&mut self) {
-        unsafe { self.value.get().drop_in_place() }
     }
 }
 
@@ -59,6 +53,8 @@ impl<T> DerefMut for AtomicMutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use std::sync::Arc;
     use std::thread;
 
@@ -113,5 +109,43 @@ mod tests {
 
         let guard = v.lock();
         assert_eq!(*guard, 2 * REPEAT);
+    }
+
+    /// Struct that increments counter on creation and decrements on drop.
+    struct Counted {
+        counter: Rc<RefCell<i32>>,
+    }
+
+    impl Counted {
+        fn new(counter: &Rc<RefCell<i32>>) -> Self {
+            let counter1 = counter.clone();
+            *counter1.borrow_mut() += 1;
+
+            Counted { counter: counter1 }
+        }
+    }
+
+    impl Drop for Counted {
+        fn drop(&mut self) {
+            *self.counter.borrow_mut() -= 1;
+        }
+    }
+
+    #[test]
+    fn test_mutex_drop() {
+        let counter = Rc::new(RefCell::new(0));
+
+        assert_eq!(*counter.borrow(), 0);
+
+        let counted = Counted::new(&counter);
+
+        assert_eq!(*counter.borrow(), 1);
+        {
+            let _mutex = AtomicMutex::new(counted);
+
+            assert_eq!(*counter.borrow(), 1);
+        }
+
+        assert_eq!(*counter.borrow(), 0);
     }
 }
