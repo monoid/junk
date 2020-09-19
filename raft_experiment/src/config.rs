@@ -1,5 +1,6 @@
 use std::convert::From;
 use std::fs::File;
+use std::collections::HashSet;
 use std::io;
 use serde_yaml;
 use serde::Deserialize;
@@ -11,7 +12,7 @@ pub struct Config {
     /// RAFT port for cluster intercommunication
     pub raft_port: u16,
     /// Initial list of nodes
-    pub nodes: Vec<String>,
+    pub nodes: HashSet<String>,
 }
 
 #[derive(Debug)]
