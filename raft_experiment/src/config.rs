@@ -1,9 +1,9 @@
+use serde::Deserialize;
+use serde_yaml;
+use std::collections::HashSet;
 use std::convert::From;
 use std::fs::File;
-use std::collections::HashSet;
 use std::io;
-use serde_yaml;
-use serde::Deserialize;
 
 #[derive(Deserialize)]
 pub struct Config {

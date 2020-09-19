@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 /// Data model.
 ///
@@ -20,10 +20,7 @@ pub struct State {
 
 impl State {
     pub fn new(nodes: HashSet<String>) -> Self {
-        Self {
-            value: 0,
-            nodes,
-        }
+        Self { value: 0, nodes }
     }
     pub fn apply(&mut self, command: &Command) {
         match command {
@@ -65,4 +62,3 @@ pub enum Command {
 
     // SetMaster(String),
 }
-
