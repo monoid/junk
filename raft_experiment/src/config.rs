@@ -13,6 +13,8 @@ pub struct Config {
     pub raft_port: u16,
     /// Initial list of nodes
     pub nodes: HashSet<String>,
+
+    pub raft_config: async_raft::ConfigBuilder,
 }
 
 #[derive(Debug)]

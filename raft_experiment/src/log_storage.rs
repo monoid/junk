@@ -38,6 +38,28 @@ impl Commiter for SyncDataCommiter {
     }
 }
 
+#[async_trait]
+trait RecordWriter : AsyncWrite {
+    /// Complete record writing, commiting it to the log, instantly
+    /// or delayed.
+    // WAL lock is released here.
+    // One cannot afford to crash?
+    // Use timeout?
+    async fn complete(self) -> io::Result<()>;
+    /// TODO?
+    async fn abort(self) -> io::Result<()>;
+}
+
+#[async_trait]
+trait LogWriter<'a> {
+    type RecWriter: RecordWriter + 'a;
+    // WAL lock is taken here.
+    // Or does it just takes self, not &mut self?
+    async fn get_writer(&'a mut self) -> io::Result<Self::RecWriter>;
+}
+
+pub struct NoopLogWriter {
+}
 
 pub struct DoubleWAL<T> {
     data_file: fs::File,
@@ -131,6 +153,8 @@ impl<T> DoubleWAL<T> {
 }
 
 impl<T> DoubleWALWriter<'_, T> where T: Commiter {
+    // TODO what is the point of the abort?  Transaction abort is an extra record, not
+    // log abort.
     pub async fn abort(&mut self) -> io::Result<()> {
         let parent = self.parent.take().expect("abort is called on destructed DoubleWALWriter");
         parent.offsets_file.set_len(self.offset_rollback_pos).await?;

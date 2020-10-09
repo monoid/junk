@@ -8,7 +8,7 @@ edition = "2018"
 
 [dependencies]
 anyhow = "1.0"
-async-raft = { git = "https://github.com/monoid/async-raft.git", branch = "serde_config" }
+async-raft = "0.5.1"
 async-trait = "*"
 tokio = { version = "0.2", features = ["full"] }
 clap = { version = "2.33", features = ["yaml"] }

@@ -4,3 +4,5 @@ nodes:
         - node1
         - node2
         - node3
+raft_config:
+        cluster_name: "test"

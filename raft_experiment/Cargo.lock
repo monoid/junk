@@ -23,8 +23,9 @@ checksum = "4d25d88fd6b8041580a654f9d0c581a047baee2b3efee13275f2fc392fc75034"
 
 [[package]]
 name = "async-raft"
-version = "0.5.0"
-source = "git+https://github.com/monoid/async-raft.git?branch=serde_config#d9ffe3ad3c1abaace77e26f76f380309cdd2b34a"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3854e1d1fd436c94fa3b119775fce51f2381f220a0ee261275e3ac63502dc7da"
 dependencies = [
  "anyhow",
  "async-trait",

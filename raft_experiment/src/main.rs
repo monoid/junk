@@ -1,8 +1,13 @@
 mod config;
 mod model;
+mod raft_network;
+mod raft_storage;
+mod log_storage;
 use clap;
+use tokio;
 
-fn main() {
+#[tokio::main]
+pub async fn main() {
     let matches = clap::App::new("Simple RAFT experiment")
         .version("1.1.1.1.1.1.1")
         .author("monoid")
@@ -35,4 +40,5 @@ fn main() {
     for n in &conf.nodes {
         eprintln!("{}", n);
     }
+    eprintln!("Raft config: {:?}", conf.raft_config.validate());
 }
