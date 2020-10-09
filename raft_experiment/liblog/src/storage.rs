@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::io::SeekFrom;
 use std::path::Path;
 use std::pin::Pin;
@@ -38,47 +39,46 @@ impl Commiter for SyncDataCommiter {
     }
 }
 
-#[async_trait]
-trait RecordWriter : AsyncWrite {
-    /// Complete record writing, commiting it to the log, instantly
-    /// or delayed.
-    // WAL lock is released here.
-    // One cannot afford to crash?
-    // Use timeout?
-    async fn complete(self) -> io::Result<()>;
-    /// TODO?
-    async fn abort(self) -> io::Result<()>;
+trait AsyncWriteSync: AsyncWrite + Send {
 }
+
+impl<T: AsyncWrite + Send> AsyncWriteSync for T {
+}
+
 
 #[async_trait]
-trait LogWriter<'a> {
-    type RecWriter: RecordWriter + 'a;
-    // WAL lock is taken here.
-    // Or does it just takes self, not &mut self?
-    async fn get_writer(&'a mut self) -> io::Result<Self::RecWriter>;
+trait LogWriter {
+    type W: AsyncWriteSync;
+    /// Write data to the log, committing it after that.  serializer
+    /// is an async function that gets a writer and outputs data,
+    /// e.g. with tokio-serde.
+    async fn writer_record<I, T, F>(
+        &'async_trait mut self,  // TODO Pin?
+        serializer: I,
+    ) -> F::Output
+    where
+        I: Fn(&'async_trait mut Self::W) -> F + Send + Sync,
+        F: Future<Output=io::Result<T>> + Send + Sync;
 }
 
-pub struct NoopLogWriter {
-}
-
-pub struct DoubleWAL<T> {
+/// Simple log with data and index files.
+struct SimpleWAL {
     data_file: fs::File,
     offsets_file: fs::File,
-    commiter: T,
 }
 
-
-pub struct DoubleWALWriter<'a, T> {
-    data_rollback_pos: u64,
-    offset_rollback_pos: u64,
-    parent: Option<&'a mut DoubleWAL<T>>,
+/// Stupid writer that doesn't bother with syncing at all.
+/// Useful for non-durability tests.
+pub struct NoopLogWriter {
+    // TODO: abstract WAL: normal files, direct write 
+    wal: SimpleWAL,
 }
 
-impl<T> DoubleWAL<T> {
+impl SimpleWAL {
     /// Parse offsets_file, finding last commited data position.
     /// Truncate offset file and data file if incomplete or uncommited
     /// data is found.
-    pub async fn new(mut data_file: fs::File, mut offsets_file: fs::File, commiter: T)
+    pub async fn new(mut data_file: fs::File, mut offsets_file: fs::File)
                -> io::Result<Self> {
         let mut data_committed_pos: u64 = 0;
         // We have learned the size, but move position to the end.
@@ -123,12 +123,11 @@ impl<T> DoubleWAL<T> {
         Ok(Self {
             data_file,
             offsets_file,
-            commiter,
         })
     }
 
-    pub async fn open<P: AsRef<Path>>(data_path: P, offsets_path: P, commiter: T)
-                                -> io::Result<Self> {
+    pub async fn open<P: AsRef<Path>>(data_path: P, offsets_path: P)
+                                      -> io::Result<Self> {
         let log_options = {
             let mut log_options = fs::OpenOptions::new();
             log_options.read(true).write(true).create(true);
@@ -137,19 +136,42 @@ impl<T> DoubleWAL<T> {
         // TODO advisory lock?
         let data_file = log_options.open(data_path).await?;
         let offsets_file = log_options.open(offsets_path).await?;
-        Self::new(data_file, offsets_file, commiter).await
+        Self::new(data_file, offsets_file).await
     }
+}
 
-    pub async fn get_writer<'a>(&'a mut self) -> io::Result<DoubleWALWriter<'a, T>> {
-        let data_rollback_pos = self.data_file.seek(SeekFrom::Current(0)).await?;
-        let offset_rollback_pos = self.offsets_file.seek(SeekFrom::Current(0)).await?;
-
-        Ok(DoubleWALWriter {
-            data_rollback_pos,
-            offset_rollback_pos,
-            parent: Some(self),
-        })
+#[async_trait]
+impl LogWriter for NoopLogWriter {
+    type W = fs::File;
+    async fn writer_record<I, T, F>(
+        &'async_trait mut self,  // TODO Pin?
+        serializer: I,
+    ) -> F::Output
+    where
+        I: Fn(&'async_trait mut Self::W) -> F + Send + Sync,
+        F: Future<Output=io::Result<T>> + Send + Sync
+    {
+        // TODO it should handle multiple records.
+        // It seems WAL should contain queue of record indices
+        // let recidx = self.wal.TODO_begin_record()?;
+        let val = serializer(&mut self.wal.data_file).await?;
+        // recidx.TODO_finish()?;
+        // recidx.flush_all(); 
+        Ok(val)
     }
+}
+
+pub struct DoubleWAL<T> {
+    data_file: fs::File,
+    offsets_file: fs::File,
+    commiter: T,
+}
+
+
+pub struct DoubleWALWriter<'a, T> {
+    data_rollback_pos: u64,
+    offset_rollback_pos: u64,
+    parent: Option<&'a mut DoubleWAL<T>>,
 }
 
 impl<T> DoubleWALWriter<'_, T> where T: Commiter {
