@@ -368,6 +368,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2448f6066e80e3bfc792e9c98bf705b4b0fc6e8ef5b43e5889aff0eaa9c58743"
 
 [[package]]
+name = "liblog"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "tokio 0.2.22",
+]
+
+[[package]]
 name = "linked-hash-map"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -606,6 +614,7 @@ dependencies = [
  "async-trait",
  "byteorder",
  "clap",
+ "liblog",
  "serde",
  "serde_yaml",
  "tokio 0.2.22",

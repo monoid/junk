@@ -9,9 +9,10 @@ edition = "2018"
 [dependencies]
 anyhow = "1.0"
 async-raft = "0.5.1"
-async-trait = "*"
+async-trait = "0.1"
 tokio = { version = "0.2", features = ["full"] }
 clap = { version = "2.33", features = ["yaml"] }
 serde = "1.0"
 serde_yaml = "0.8"
 byteorder = "1"
+liblog = { path = "../liblog" }

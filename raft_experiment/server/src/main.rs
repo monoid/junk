@@ -2,7 +2,6 @@ mod config;
 mod model;
 mod raft_network;
 mod raft_storage;
-mod log_storage;
 use clap;
 use tokio;
 
