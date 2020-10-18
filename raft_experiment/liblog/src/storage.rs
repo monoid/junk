@@ -18,8 +18,9 @@ use tokio::io::{self, AsyncReadExt, AsyncWrite};
  *
  */
 
-/// Safety wrapper to hide implementation (e.g. to hide file methods).
-/// You can use it as any AsyncWrite.
+/// Safety wrapper to hide underlying file (e.g. to hide file methods
+/// like seek, thus stream is append-only for the user).  You can use
+/// it as any AsyncWrite.
 pub struct AsyncWriteWrapper<'a, T: AsyncWrite + Send + Sync>(&'a mut T);
 
 impl<'a, T: AsyncWrite + Send + Sync + Unpin> AsyncWrite for AsyncWriteWrapper<'a, T> {
@@ -63,29 +64,40 @@ trait LogWriter {
     /// is an async function that gets an AsyncWrite to write data,
     /// e.g. with tokio-serde.
     async fn command<I, T, F>(
-        &'async_trait mut self, // TODO Pin?
+        &mut self, // TODO Pin?
         serializer: I,
     ) -> F::Output
     where
-        I: Fn(AsyncWriteWrapper<'async_trait, Self::W>) -> F + Send + Sync,
-        F: Future<Output = io::Result<T>> + Send + Sync;
+        I: for<'a> FnOnce(AsyncWriteWrapper<'a, Self::W>) -> F + Send + Sync,
+        F: Future<Output = io::Result<T>> + Send + Sync,
+        T: Send + 'static;
 }
 
 /// WAL aka log.
-// TODO rename to storage?
+// TODO rename to storage?  But it is not only storage, but sync method.
+#[async_trait]
 pub trait AsyncWAL {
     type W: AsyncWrite + Send + Sync;
-    type CommandPos: Send + Sync;
-    // TODO: command that returns (CommandPos, F::Output), like LogWriter.
-    // TODO: commit_data -- it seems the only reasonable way to make nocommit log is create nocommit
-    //       AsyncWAL.  Thus it is indices who will commit first commands, then indices.
-    //       And commit_methods should not exist.
-    // TODO: indices(&[CommandPos])
-    // TODO: commit_indices
-    fn get_data_writer(&mut self) -> &mut Self::W;
+    type CommandPos: Clone + Send + Sync + 'static;
+
+    /// Executes command that writes data to AsyncWriteWrapper.
+    async fn command<I, T, F>(
+        &mut self, // TODO Pin?
+        serializer: I,
+    ) -> io::Result<(Self::CommandPos, T)>
+    where
+        I: for<'a> FnOnce(AsyncWriteWrapper<'a, Self::W>) -> F + Send + Sync,
+        F: Future<Output = io::Result<T>> + Send + Sync,
+        T: Send + 'static;
+    /// Appends data to index file.  For durabale file store, it has
+    /// to flush data file, write index and then flush index.  But
+    /// lightweight implementations for non-durable tests may skip
+    /// flushing.  Of course, in-memory implementation do not need
+    /// flush at all.
+    async fn indices(&mut self, pos: &[Self::CommandPos]) -> io::Result<()>;
 }
 
-/// Stupid writer that doesn't bother with syncing at all.
+/// Simple writer that commits each command instantly.
 /// Useful for non-durability tests.
 pub struct NoopLogWriter<Wal> {
     // TODO: abstract WAL: memory, normal files, direct write
@@ -166,19 +178,16 @@ impl SimpleWAL {
 impl<TWal: AsyncWAL + Send + Sync> LogWriter for NoopLogWriter<TWal> {
     type W = TWal::W;
     async fn command<I, T, F>(
-        &'async_trait mut self, // TODO Pin?
+        &mut self, // TODO Pin?
         serializer: I,
     ) -> F::Output
     where
-        I: Fn(AsyncWriteWrapper<'async_trait, Self::W>) -> F + Send + Sync,
+        I: for<'a> FnOnce(AsyncWriteWrapper<'a, Self::W>) -> F + Send + Sync,
         F: Future<Output = io::Result<T>> + Send + Sync,
+        T: Send + 'static
     {
-        // TODO it should handle multiple records.
-        // It seems WAL should contain queue of record indices
-        // let recidx = self.wal.TODO_begin_record()?;
-        let val = serializer(AsyncWriteWrapper(self.wal.get_data_writer())).await?;
-        // recidx.TODO_finish()?;
-        // recidx.flush_all();
+        let (pos, val) = self.wal.command(serializer).await?;
+        self.wal.indices(std::slice::from_ref(&pos)).await?; // TODO how to tell if error is from data or index?
         Ok(val)
     }
 }
@@ -193,24 +202,56 @@ mod tests {
         // A simple test that proofs that whole idea is implementable.
         struct MemWal {
             data: Vec<u8>,
+            indices: Vec<usize>,
         }
 
+        #[async_trait]
         impl AsyncWAL for MemWal {
             type W = Vec<u8>;
-            type CommandPos = ();
+            type CommandPos = usize;
 
-            fn get_data_writer(&mut self) -> &mut Self::W {
-                &mut self.data
+            /// Executes command that writes data to AsyncWriteWrapper.
+            async fn command<I, T, F>(
+                &mut self, // TODO Pin?
+                serializer: I,
+            ) -> io::Result<(Self::CommandPos, T)>
+            where
+                I: FnOnce(AsyncWriteWrapper<'_, Self::W>) -> F + Send + Sync,
+                F: Future<Output = io::Result<T>> + Send + Sync,
+                T: Send + 'static {
+                let orig_size = self.data.len();
+                serializer(AsyncWriteWrapper(&mut self.data)).await.map(
+                    |res| (self.data.len() - orig_size, res)
+                )
             }
+            async fn indices(&mut self, pos: &[Self::CommandPos]) -> io::Result<()> {
+                self.indices.extend_from_slice(pos);
+                Ok(())
+            }
+
         }
 
         let mut noop = NoopLogWriter {
             wal: MemWal {
                 data: Default::default(),
+                indices: Default::default(),
             },
         };
 
-        noop.command(|mut w| async move { w.write_all("Hello!".as_bytes()).await }).await?;
+        async fn hello<'a>(mut w: AsyncWriteWrapper<'a, Vec<u8>>) -> io::Result<()> {
+            w.write_all("Hello!".as_bytes()).await
+        }
+
+        /*
+        Error from a lost variant:
+
+240 |         noop.command(|mut w| async move { w.write_all("Hello!".as_bytes()).await }).await?;
+    |                       ------ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ returning this value requires that `'1` must outlive `'2`
+    |                       |    |
+    |                       |    return type of closure is impl std::future::Future
+    |                       has type `storage::AsyncWriteWrapper<'1, std::vec::Vec<u8>>`
+        */
+        noop.command(hello).await?;
         assert!(String::from_utf8(noop.wal.data) == Ok("Hello!".to_string()));
         Ok(())
     }
