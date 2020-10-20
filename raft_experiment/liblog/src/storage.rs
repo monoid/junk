@@ -2,10 +2,11 @@ use std::future::Future;
 use std::io::SeekFrom;
 use std::path::Path;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use async_trait::async_trait;
-use tokio::fs;
 use tokio::io::{self, AsyncReadExt, AsyncWrite};
+use tokio::{fs, sync};
 
 /**
  * Raft request (i.e. command) Log.
@@ -21,32 +22,37 @@ use tokio::io::{self, AsyncReadExt, AsyncWrite};
 /// Safety wrapper to hide underlying file (e.g. to hide file methods
 /// like seek, thus stream is append-only for the user).  You can use
 /// it as any AsyncWrite.
-pub struct AsyncWriteWrapper<'a, T: AsyncWrite + Send + Sync>(&'a mut T);
+pub struct AsyncWriteWrapper<T: AsyncWrite + Send + Sync>(sync::OwnedMutexGuard<T>);
 
-impl<'a, T: AsyncWrite + Send + Sync + Unpin> AsyncWrite for AsyncWriteWrapper<'a, T> {
+impl<T: AsyncWrite + Send + Sync> AsyncWriteWrapper<T> {
+    async fn new(w: &Arc<sync::Mutex<T>>) -> Self {
+        Self(w.clone().lock_owned().await)
+    }
+}
+
+impl<T: AsyncWrite + Send + Sync + Unpin> AsyncWrite for AsyncWriteWrapper<T> {
     fn poll_write(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<Result<usize, io::Error>> {
-        Pin::new(&mut self.0).poll_write(cx, buf)
+        Pin::new(&mut *self.0).poll_write(cx, buf)
     }
 
     fn poll_flush(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.0).poll_flush(cx)
+        Pin::new(&mut *self.0).poll_flush(cx)
     }
 
     fn poll_shutdown(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.0).poll_shutdown(cx)
+        Pin::new(&mut *self.0).poll_shutdown(cx)
     }
 }
-
 
 /// Async log writer.  The write_command async method gets an FnOnce that can
 /// write data, and all written data will be recorded as log command.  Its size and
@@ -68,8 +74,8 @@ trait LogWriter {
         serializer: I,
     ) -> F::Output
     where
-        I: for<'a> FnOnce(AsyncWriteWrapper<'a, Self::W>) -> F + Send + Sync,
-        F: Future<Output = io::Result<T>> + Send + Sync,
+        I: FnOnce(AsyncWriteWrapper<Self::W>) -> F + Send + Sync,
+        F: Future<Output = io::Result<T>> + Send + Sync + 'async_trait,
         T: Send + 'static;
 }
 
@@ -86,7 +92,7 @@ pub trait AsyncWAL {
         serializer: I,
     ) -> io::Result<(Self::CommandPos, T)>
     where
-        I: for<'a> FnOnce(AsyncWriteWrapper<'a, Self::W>) -> F + Send + Sync,
+        I: FnOnce(AsyncWriteWrapper<Self::W>) -> F + Send + Sync,
         F: Future<Output = io::Result<T>> + Send + Sync,
         T: Send + 'static;
     /// Appends data to index file.  For durabale file store, it has
@@ -182,9 +188,9 @@ impl<TWal: AsyncWAL + Send + Sync> LogWriter for NoopLogWriter<TWal> {
         serializer: I,
     ) -> F::Output
     where
-        I: for<'a> FnOnce(AsyncWriteWrapper<'a, Self::W>) -> F + Send + Sync,
-        F: Future<Output = io::Result<T>> + Send + Sync,
-        T: Send + 'static
+        I: FnOnce(AsyncWriteWrapper<Self::W>) -> F + Send + Sync,
+        F: Future<Output = io::Result<T>> + Send + Sync + 'async_trait,
+        T: Send + 'static,
     {
         let (pos, val) = self.wal.command(serializer).await?;
         self.wal.indices(std::slice::from_ref(&pos)).await?; // TODO how to tell if error is from data or index?
@@ -201,7 +207,7 @@ mod tests {
     async fn test_async_write_simple() -> io::Result<()> {
         // A simple test that proofs that whole idea is implementable.
         struct MemWal {
-            data: Vec<u8>,
+            data: Arc<sync::Mutex<Vec<u8>>>,
             indices: Vec<usize>,
         }
 
@@ -216,19 +222,21 @@ mod tests {
                 serializer: I,
             ) -> io::Result<(Self::CommandPos, T)>
             where
-                I: FnOnce(AsyncWriteWrapper<'_, Self::W>) -> F + Send + Sync,
+                I: FnOnce(AsyncWriteWrapper<Self::W>) -> F + Send + Sync,
                 F: Future<Output = io::Result<T>> + Send + Sync,
-                T: Send + 'static {
-                let orig_size = self.data.len();
-                serializer(AsyncWriteWrapper(&mut self.data)).await.map(
-                    |res| (self.data.len() - orig_size, res)
-                )
+                T: Send + 'static,
+            {
+                let orig_size = self.data.lock().await.len();
+                match serializer(AsyncWriteWrapper::new(&self.data).await).await {
+                    Ok(res) => Ok((self.data.lock().await.len() - orig_size, res)),
+                    Err(e) => Err(e),
+                }
             }
+
             async fn indices(&mut self, pos: &[Self::CommandPos]) -> io::Result<()> {
                 self.indices.extend_from_slice(pos);
                 Ok(())
             }
-
         }
 
         let mut noop = NoopLogWriter {
@@ -238,21 +246,17 @@ mod tests {
             },
         };
 
-        async fn hello<'a>(mut w: AsyncWriteWrapper<'a, Vec<u8>>) -> io::Result<()> {
+        // async fn hello<'a>(mut w: AsyncWriteWrapper<Vec<u8>>) -> io::Result<()> {
+        //     w.write_all("Hello!".as_bytes()).await
+        // }
+
+        let hello = move |mut w: AsyncWriteWrapper<Vec<u8>>| async move {
             w.write_all("Hello!".as_bytes()).await
-        }
+        };
 
-        /*
-        Error from a lost variant:
-
-240 |         noop.command(|mut w| async move { w.write_all("Hello!".as_bytes()).await }).await?;
-    |                       ------ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ returning this value requires that `'1` must outlive `'2`
-    |                       |    |
-    |                       |    return type of closure is impl std::future::Future
-    |                       has type `storage::AsyncWriteWrapper<'1, std::vec::Vec<u8>>`
-        */
         noop.command(hello).await?;
-        assert!(String::from_utf8(noop.wal.data) == Ok("Hello!".to_string()));
+        let data = Arc::try_unwrap(noop.wal.data).unwrap().into_inner();
+        assert!(String::from_utf8(data) == Ok("Hello!".to_string()));
         Ok(())
     }
 }

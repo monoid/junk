@@ -8,4 +8,4 @@ edition = "2018"
 
 [dependencies]
 async-trait = "0.1"
-tokio = { version = "0.2", features = ["fs", "macros"] }
+tokio = { version = "0.2", features = ["fs", "macros", "sync"] }
