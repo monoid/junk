@@ -25,7 +25,7 @@ use tokio::{fs, sync};
 pub struct AsyncWriteWrapper<T: AsyncWrite + Send + Sync>(sync::OwnedMutexGuard<T>);
 
 impl<T: AsyncWrite + Send + Sync> AsyncWriteWrapper<T> {
-    async fn new(w: &Arc<sync::Mutex<T>>) -> Self {
+    pub async fn new(w: &Arc<sync::Mutex<T>>) -> Self {
         Self(w.clone().lock_owned().await)
     }
 }
@@ -64,8 +64,8 @@ impl<T: AsyncWrite + Send + Sync + Unpin> AsyncWrite for AsyncWriteWrapper<T> {
 /// documentation for particular implementation.  Of course, order of
 /// commands is respected.
 #[async_trait]
-trait LogWriter {
-    type W: AsyncWrite + Send + Sync;
+pub trait LogWriter {
+    type DataWrite: AsyncWrite + Send + Sync;
     /// Write data to the log, committing it after that.  serializer
     /// is an async function that gets an AsyncWrite to write data,
     /// e.g. with tokio-serde.
@@ -74,16 +74,20 @@ trait LogWriter {
         serializer: I,
     ) -> F::Output
     where
-        I: FnOnce(AsyncWriteWrapper<Self::W>) -> F + Send + Sync,
+        I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
         F: Future<Output = io::Result<T>> + Send + Sync + 'async_trait,
         T: Send + 'static;
 }
 
-/// WAL aka log.
+/// WAL aka log.  Implementations differ by storage, syncing method etc.
 // TODO rename to storage?  But it is not only storage, but sync method.
 #[async_trait]
 pub trait AsyncWAL {
-    type W: AsyncWrite + Send + Sync;
+    /// Type for writing data.
+    // The alternative is dyn Write.  Associated type doesn't allow
+    // using same F for different AsyncWAL.  OTOH using different
+    // AsyncWAL in same project out of testing scope is not expected.
+    type DataWrite: AsyncWrite + Send + Sync;
     type CommandPos: Clone + Send + Sync + 'static;
 
     /// Executes command that writes data to AsyncWriteWrapper.
@@ -92,7 +96,7 @@ pub trait AsyncWAL {
         serializer: I,
     ) -> io::Result<(Self::CommandPos, T)>
     where
-        I: FnOnce(AsyncWriteWrapper<Self::W>) -> F + Send + Sync,
+        I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
         F: Future<Output = io::Result<T>> + Send + Sync,
         T: Send + 'static;
     /// Appends data to index file.  For durabale file store, it has
@@ -182,13 +186,13 @@ impl SimpleWAL {
 
 #[async_trait]
 impl<TWal: AsyncWAL + Send + Sync> LogWriter for NoopLogWriter<TWal> {
-    type W = TWal::W;
+    type DataWrite = TWal::DataWrite;
     async fn command<I, T, F>(
         &mut self, // TODO Pin?
         serializer: I,
     ) -> F::Output
     where
-        I: FnOnce(AsyncWriteWrapper<Self::W>) -> F + Send + Sync,
+        I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
         F: Future<Output = io::Result<T>> + Send + Sync + 'async_trait,
         T: Send + 'static,
     {
@@ -213,7 +217,7 @@ mod tests {
 
         #[async_trait]
         impl AsyncWAL for MemWal {
-            type W = Vec<u8>;
+            type DataWrite = Vec<u8>;
             type CommandPos = usize;
 
             /// Executes command that writes data to AsyncWriteWrapper.
@@ -222,7 +226,7 @@ mod tests {
                 serializer: I,
             ) -> io::Result<(Self::CommandPos, T)>
             where
-                I: FnOnce(AsyncWriteWrapper<Self::W>) -> F + Send + Sync,
+                I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
                 F: Future<Output = io::Result<T>> + Send + Sync,
                 T: Send + 'static,
             {
