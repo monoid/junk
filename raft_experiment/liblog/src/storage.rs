@@ -5,7 +5,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tokio::io::{self, AsyncReadExt, AsyncWrite};
+use tokio::io::{self, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::{fs, sync};
 
 /**
@@ -23,12 +23,6 @@ use tokio::{fs, sync};
 /// like seek, thus stream is append-only for the user).  You can use
 /// it as any AsyncWrite.
 pub struct AsyncWriteWrapper<T: AsyncWrite + Send + Sync>(sync::OwnedMutexGuard<T>);
-
-impl<T: AsyncWrite + Send + Sync> AsyncWriteWrapper<T> {
-    pub async fn new(w: &Arc<sync::Mutex<T>>) -> Self {
-        Self(w.clone().lock_owned().await)
-    }
-}
 
 impl<T: AsyncWrite + Send + Sync + Unpin> AsyncWrite for AsyncWriteWrapper<T> {
     fn poll_write(
@@ -54,31 +48,6 @@ impl<T: AsyncWrite + Send + Sync + Unpin> AsyncWrite for AsyncWriteWrapper<T> {
     }
 }
 
-/// Async log writer.  The write_command async method gets an FnOnce that can
-/// write data, and all written data will be recorded as log command.  Its size and
-/// position will be durably recorded as well.
-///
-/// Please note that LogWriter can group writes into batches in data
-/// size and time manner, and command will return on when
-/// requested data is durably written or error is detected.  See
-/// documentation for particular implementation.  Of course, order of
-/// commands is respected.
-#[async_trait]
-pub trait LogWriter {
-    type DataWrite: AsyncWrite + Send + Sync;
-    /// Write data to the log, committing it after that.  serializer
-    /// is an async function that gets an AsyncWrite to write data,
-    /// e.g. with tokio-serde.
-    async fn command<I, T, F>(
-        &mut self, // TODO Pin?
-        serializer: I,
-    ) -> F::Output
-    where
-        I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-        F: Future<Output = io::Result<T>> + Send + Sync + 'async_trait,
-        T: Send + 'static;
-}
-
 /// WAL aka log.  Implementations differ by storage, syncing method etc.
 // TODO rename to storage?  But it is not only storage, but sync method.
 #[async_trait]
@@ -97,7 +66,7 @@ pub trait AsyncWAL {
     ) -> io::Result<(Self::CommandPos, T)>
     where
         I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-        F: Future<Output = io::Result<T>> + Send + Sync,
+        F: Future<Output = io::Result<(T, AsyncWriteWrapper<Self::DataWrite>)>> + Send + Sync,
         T: Send + 'static;
     /// Appends data to index file.  For durabale file store, it has
     /// to flush data file, write index and then flush index.  But
@@ -107,31 +76,82 @@ pub trait AsyncWAL {
     async fn indices(&mut self, pos: &[Self::CommandPos]) -> io::Result<()>;
 }
 
-/// Simple writer that commits each command instantly.
-/// Useful for non-durability tests.
-pub struct NoopLogWriter<Wal> {
-    // TODO: abstract WAL: memory, normal files, direct write
-    wal: Wal,
+/// Async log writer built upon AsyncWAL.  The command async method
+/// gets an FnOnce that can write data (serialized "command" like
+/// "dict[K] = V"), and all written data will be recorded as log
+/// command.  Its position will be durably recorded as well.
+///
+/// Please note that LogWriter can group writes into batches basing on
+/// data size or time, and command' future will complete when
+/// requested data is written (presumably durably, it depends on
+/// underlying AsyncWAL) or error is detected.  See documentation for
+/// particular implementation.  Of course, commands are written in the
+/// command() call order.  And as command takes &mut self, only one
+/// command can be written at once.
+#[async_trait]
+pub trait LogWriter<AWAL: AsyncWAL> {
+    /// Write data to the log, committing it after that.  serializer
+    /// is an async function that gets an AsyncWrite to write data,
+    /// e.g. with tokio-serde.
+    async fn command<I, T, F>(
+        &mut self, // TODO Pin?
+        serializer: I,
+    ) -> io::Result<T>
+    where
+        I: FnOnce(AsyncWriteWrapper<AWAL::DataWrite>) -> F + Send + Sync,
+        F: Future<Output = io::Result<(T, AsyncWriteWrapper<AWAL::DataWrite>)>>
+            + Send
+            + Sync
+            + 'async_trait,
+        T: Send + 'static;
+}
+
+#[async_trait]
+pub trait FileSyncer: Send + Sync {
+    async fn sync(&self, file: &mut fs::File) -> io::Result<()>;
+}
+
+pub struct NoopFileSyncer {}
+
+#[async_trait]
+impl FileSyncer for NoopFileSyncer {
+    async fn sync(&self, _file: &mut fs::File) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+pub struct SyncDataFileSyncer {}
+
+#[async_trait]
+impl FileSyncer for SyncDataFileSyncer {
+    async fn sync(&self, file: &mut fs::File) -> io::Result<()> {
+        file.sync_data().await
+    }
 }
 
 /// Simple log with data and index files.
-struct SimpleWAL {
-    data_file: fs::File,
-    offsets_file: fs::File,
+pub struct SimpleFileWAL<S: Send> {
+    data_file: Arc<sync::Mutex<fs::File>>,
+    index_file: fs::File,
+    sync: S,
 }
 
-impl SimpleWAL {
-    /// Parse offsets_file, finding last commited data position.
+impl<S: Send> SimpleFileWAL<S> {
+    /// Parse index_file, finding last commited data position.
     /// Truncate offset file and data file if incomplete or uncommited
     /// data is found.
-    pub async fn new(mut data_file: fs::File, mut offsets_file: fs::File) -> io::Result<Self> {
+    pub async fn new(
+        mut data_file: fs::File,
+        mut index_file: fs::File,
+        sync: S,
+    ) -> io::Result<Self> {
         let mut data_committed_pos: u64 = 0;
         // We have learned the size, but move position to the end.
-        // We get proper position from the offsets_file, and then
+        // We get proper position from the index_file, and then
         // seek to it later (actually, this is a point of this method).
         let data_len = data_file.seek(SeekFrom::End(0)).await?;
 
-        offsets_file.seek(SeekFrom::Start(0)).await?;
+        index_file.seek(SeekFrom::Start(0)).await?;
 
         // TODO refactor to a separate function to test it.  It needs
         // only Read to be tested.
@@ -141,7 +161,7 @@ impl SimpleWAL {
 
         // TODO add buffering only for reading.
         loop {
-            data_size = match offsets_file.read_u64().await {
+            data_size = match index_file.read_u64().await {
                 Ok(n) => n,
                 Err(_) => {
                     break;
@@ -155,10 +175,10 @@ impl SimpleWAL {
                 break;
             }
         }
-        offsets_file.seek(SeekFrom::Start(offset_offset)).await?;
+        index_file.seek(SeekFrom::Start(offset_offset)).await?;
         // TODO: log offsets truncation.
-        offsets_file.set_len(offset_offset).await?;
-        offsets_file.sync_data().await?;
+        index_file.set_len(offset_offset).await?;
+        index_file.sync_data().await?;
 
         data_file.seek(SeekFrom::Start(data_committed_pos)).await?;
         // TODO: log data truncation.
@@ -166,12 +186,13 @@ impl SimpleWAL {
         data_file.sync_data().await?;
 
         Ok(Self {
-            data_file,
-            offsets_file,
+            data_file: Arc::new(sync::Mutex::new(data_file)),
+            index_file,
+            sync,
         })
     }
 
-    pub async fn open<P: AsRef<Path>>(data_path: P, offsets_path: P) -> io::Result<Self> {
+    pub async fn open<P: AsRef<Path>>(data_path: P, offsets_path: P, sync: S) -> io::Result<Self> {
         let log_options = {
             let mut log_options = fs::OpenOptions::new();
             log_options.read(true).write(true).create(true);
@@ -180,20 +201,63 @@ impl SimpleWAL {
         // TODO advisory lock?
         let data_file = log_options.open(data_path).await?;
         let offsets_file = log_options.open(offsets_path).await?;
-        Self::new(data_file, offsets_file).await
+        Self::new(data_file, offsets_file, sync).await
     }
 }
 
 #[async_trait]
-impl<TWal: AsyncWAL + Send + Sync> LogWriter for NoopLogWriter<TWal> {
-    type DataWrite = TWal::DataWrite;
+impl<S: FileSyncer> AsyncWAL for SimpleFileWAL<S> {
+    type DataWrite = fs::File;
+    type CommandPos = u64;
+
     async fn command<I, T, F>(
         &mut self, // TODO Pin?
         serializer: I,
-    ) -> F::Output
+    ) -> io::Result<(Self::CommandPos, T)>
     where
         I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-        F: Future<Output = io::Result<T>> + Send + Sync + 'async_trait,
+        F: Future<Output = io::Result<(T, AsyncWriteWrapper<Self::DataWrite>)>> + Send + Sync,
+        T: Send + 'static,
+    {
+        let mut data_write = self.data_file.clone().lock_owned().await;
+        let orig_pos = data_write.seek(SeekFrom::Current(0)).await?;
+        let (v, AsyncWriteWrapper(mut data_write)) =
+            serializer(AsyncWriteWrapper(data_write)).await?;
+        let new_pos = data_write.seek(SeekFrom::Current(0)).await?;
+        Ok((new_pos - orig_pos, v))
+    }
+
+    async fn indices(&mut self, pos: &[Self::CommandPos]) -> io::Result<()> {
+        {
+            let mut data_write = self.data_file.lock().await;
+            self.sync.sync(&mut data_write).await?;
+        }
+        for p in pos {
+            self.index_file.write_all(&p.to_ne_bytes()).await?;
+        }
+        self.sync.sync(&mut self.index_file).await?;
+        Ok(())
+    }
+}
+
+/// Simple writer that commits each command instantly.
+/// Useful for non-durability tests.
+pub struct InstantLogWriter<AWAL> {
+    wal: AWAL,
+}
+
+#[async_trait]
+impl<AWAL: AsyncWAL + Send + Sync> LogWriter<AWAL> for InstantLogWriter<AWAL> {
+    async fn command<I, T, F>(
+        &mut self, // TODO Pin?
+        serializer: I,
+    ) -> io::Result<T>
+    where
+        I: FnOnce(AsyncWriteWrapper<AWAL::DataWrite>) -> F + Send + Sync,
+        F: Future<Output = io::Result<(T, AsyncWriteWrapper<AWAL::DataWrite>)>>
+            + Send
+            + Sync
+            + 'async_trait,
         T: Send + 'static,
     {
         let (pos, val) = self.wal.command(serializer).await?;
@@ -227,12 +291,17 @@ mod tests {
             ) -> io::Result<(Self::CommandPos, T)>
             where
                 I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-                F: Future<Output = io::Result<T>> + Send + Sync,
+                F: Future<Output = io::Result<(T, AsyncWriteWrapper<Self::DataWrite>)>>
+                    + Send
+                    + Sync,
                 T: Send + 'static,
             {
-                let orig_size = self.data.lock().await.len();
-                match serializer(AsyncWriteWrapper::new(&self.data).await).await {
-                    Ok(res) => Ok((self.data.lock().await.len() - orig_size, res)),
+                let mut data_write = self.data.clone().lock_owned().await;
+                let orig_size = data_write.len();
+                match serializer(AsyncWriteWrapper(data_write)).await {
+                    Ok((res, AsyncWriteWrapper(mut data_write))) => {
+                        Ok((data_write.len() - orig_size, res))
+                    }
                     Err(e) => Err(e),
                 }
             }
@@ -243,7 +312,7 @@ mod tests {
             }
         }
 
-        let mut noop = NoopLogWriter {
+        let mut noop = InstantLogWriter {
             wal: MemWal {
                 data: Default::default(),
                 indices: Default::default(),
@@ -251,11 +320,11 @@ mod tests {
         };
 
         // async fn hello<'a>(mut w: AsyncWriteWrapper<Vec<u8>>) -> io::Result<()> {
-        //     w.write_all("Hello!".as_bytes()).await
+        //     w.write_all("Hello!".as_bytes()).await.map(move |x| (x, w))
         // }
 
         let hello = move |mut w: AsyncWriteWrapper<Vec<u8>>| async move {
-            w.write_all("Hello!".as_bytes()).await
+            w.write_all("Hello!".as_bytes()).await.map(move |x| (x, w))
         };
 
         noop.command(hello).await?;
