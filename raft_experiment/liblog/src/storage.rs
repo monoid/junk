@@ -130,13 +130,13 @@ impl FileSyncer for SyncDataFileSyncer {
 }
 
 /// Simple log with data and index files.
-pub struct SimpleFileWAL<S: Send> {
+pub struct SimpleFileWAL<S> {
     data_file: Arc<sync::Mutex<fs::File>>,
     index_file: fs::File,
     sync: S,
 }
 
-impl<S: Send> SimpleFileWAL<S> {
+impl<S> SimpleFileWAL<S> {
     /// Parse index_file, finding last commited data position.
     /// Truncate offset file and data file if incomplete or uncommited
     /// data is found.
