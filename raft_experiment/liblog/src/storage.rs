@@ -66,6 +66,8 @@ pub trait AsyncWAL {
     ) -> io::Result<(Self::CommandPos, T)>
     where
         I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
+        // TODO: return (Result<T>, AWW), not Result<(T, AWW)>.
+        // OTHO, it is neither convenient to handle nor required.
         F: Future<Output = io::Result<(T, AsyncWriteWrapper<Self::DataWrite>)>> + Send + Sync,
         T: Send + 'static;
     /// Appends data to index file.  For durabale file store, it has
@@ -142,6 +144,7 @@ impl<S> SimpleFileWAL<S> {
     /// Parse index_file, finding last commited data position.
     /// Truncate offset file and data file if incomplete or uncommited
     /// data is found.
+    // TODO: feed parsed data into some callback to restore data.
     pub async fn new(
         mut data_file: fs::File,
         mut index_file: fs::File,
@@ -155,13 +158,10 @@ impl<S> SimpleFileWAL<S> {
 
         index_file.seek(SeekFrom::Start(0)).await?;
 
-        // TODO refactor to a separate function to test it.  It needs
-        // only Read to be tested.
         let mut data_size: u64;
         // Valid offset known so far.
         let mut offset_offset: u64 = 0;
 
-        // TODO add buffering only for reading.
         loop {
             data_size = match index_file.read_u64().await {
                 Ok(n) => n,
