@@ -94,7 +94,7 @@ pub trait LogWriter<AWAL: AsyncWAL> {
     /// is an async function that gets an AsyncWrite to write data,
     /// e.g. with tokio-serde.
     async fn command<I, T, F>(
-        &mut self, // TODO Pin?
+        &self, // TODO Pin?
         serializer: I,
     ) -> io::Result<T>
     where
@@ -111,6 +111,7 @@ pub trait FileSyncer: Send + Sync {
     async fn sync(&self, file: &mut fs::File) -> io::Result<()>;
 }
 
+#[derive(Default)]
 pub struct NoopFileSyncer {}
 
 #[async_trait]
@@ -120,6 +121,7 @@ impl FileSyncer for NoopFileSyncer {
     }
 }
 
+#[derive(Default)]
 pub struct SyncDataFileSyncer {}
 
 #[async_trait]
@@ -243,13 +245,21 @@ impl<S: FileSyncer> AsyncWAL for SimpleFileWAL<S> {
 /// Simple writer that commits each command instantly.
 /// Useful for non-durability tests.
 pub struct InstantLogWriter<AWAL> {
-    wal: AWAL,
+    wal: sync::Mutex<AWAL>,
+}
+
+impl<AWAL> InstantLogWriter<AWAL> {
+    pub fn new(wal: AWAL) -> Self {
+        Self {
+            wal: sync::Mutex::new(wal)
+        }
+    }
 }
 
 #[async_trait]
 impl<AWAL: AsyncWAL + Send + Sync> LogWriter<AWAL> for InstantLogWriter<AWAL> {
     async fn command<I, T, F>(
-        &mut self, // TODO Pin?
+        &self, // TODO Pin?
         serializer: I,
     ) -> io::Result<T>
     where
@@ -260,8 +270,9 @@ impl<AWAL: AsyncWAL + Send + Sync> LogWriter<AWAL> for InstantLogWriter<AWAL> {
             + 'async_trait,
         T: Send + 'static,
     {
-        let (pos, val) = self.wal.command(serializer).await?;
-        self.wal.indices(std::slice::from_ref(&pos)).await?; // TODO how to tell if error is from data or index?
+        let mut guard = self.wal.lock().await;
+        let (pos, val) = guard.command(serializer).await?;
+        guard.indices(std::slice::from_ref(&pos)).await?; // TODO how to tell if error is from data or index?
         Ok(val)
     }
 }
@@ -296,10 +307,10 @@ mod tests {
                     + Sync,
                 T: Send + 'static,
             {
-                let mut data_write = self.data.clone().lock_owned().await;
+                let data_write = self.data.clone().lock_owned().await;
                 let orig_size = data_write.len();
                 match serializer(AsyncWriteWrapper(data_write)).await {
-                    Ok((res, AsyncWriteWrapper(mut data_write))) => {
+                    Ok((res, AsyncWriteWrapper(data_write))) => {
                         Ok((data_write.len() - orig_size, res))
                     }
                     Err(e) => Err(e),
@@ -312,11 +323,13 @@ mod tests {
             }
         }
 
-        let mut noop = InstantLogWriter {
-            wal: MemWal {
-                data: Default::default(),
-                indices: Default::default(),
-            },
+        let noop = InstantLogWriter {
+                wal: sync::Mutex::new(
+                MemWal {
+                    data: Default::default(),
+                    indices: Default::default(),
+                },
+            )
         };
 
         // async fn hello<'a>(mut w: AsyncWriteWrapper<Vec<u8>>) -> io::Result<()> {
@@ -328,7 +341,7 @@ mod tests {
         };
 
         noop.command(hello).await?;
-        let data = Arc::try_unwrap(noop.wal.data).unwrap().into_inner();
+        let data = Arc::try_unwrap(noop.wal.into_inner().data).unwrap().into_inner();
         assert!(String::from_utf8(data) == Ok("Hello!".to_string()));
         Ok(())
     }
