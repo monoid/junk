@@ -3,4 +3,6 @@
 members = [
     "liblog",
     "server",
+    "bench_common",
+    "bench_single",
 ]
