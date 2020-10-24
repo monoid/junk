@@ -22,7 +22,7 @@ use tokio::{fs, sync};
 /// Safety wrapper to hide underlying file (e.g. to hide file methods
 /// like seek, thus stream is append-only for the user).  You can use
 /// it as any AsyncWrite.
-pub struct AsyncWriteWrapper<T: AsyncWrite + Send + Sync>(sync::OwnedMutexGuard<T>);
+pub struct AsyncWriteWrapper<T: AsyncWrite + Send + Sync>(pub(crate) sync::OwnedMutexGuard<T>);
 
 impl<T: AsyncWrite + Send + Sync + Unpin> AsyncWrite for AsyncWriteWrapper<T> {
     fn poll_write(
