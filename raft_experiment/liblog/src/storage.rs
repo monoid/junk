@@ -56,7 +56,7 @@ pub trait AsyncWAL {
     // The alternative is dyn Write.  Associated type doesn't allow
     // using same F for different AsyncWAL.  OTOH using different
     // AsyncWAL in same project out of testing scope is not expected.
-    type DataWrite: AsyncWrite + Send + Sync;
+    type DataWrite: AsyncWrite + Send + Sync + Unpin;
     type CommandPos: Clone + Send + Sync + 'static;
 
     /// Executes command that writes data to AsyncWriteWrapper.
