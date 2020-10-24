@@ -14,7 +14,11 @@ pub async fn main() -> io::Result<()> {
         storage::SimpleFileWAL::new(
             data_file,
             index_file,
+            // 201.73 trans/sec, on my notebook's SSD
             storage::SyncDataFileSyncer::default(),
+
+            // 10582.01 trans/sec
+            // storage::NoopFileSyncer::default(),
         ).await?);
     let reg = Arc::new(Register::new(0, log_writer));
     
