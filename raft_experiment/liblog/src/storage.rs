@@ -91,7 +91,8 @@ pub trait AsyncWAL {
 /// command() call order.  And as command takes &mut self, only one
 /// command can be written at once.
 #[async_trait]
-pub trait LogWriter<AWAL: AsyncWAL> {
+pub trait LogWriter {
+    type DataWrite: AsyncWrite + Send + Sync + Unpin;
     /// Write data to the log, committing it after that.  serializer
     /// is an async function that gets an AsyncWrite to write data,
     /// e.g. with tokio-serde.
@@ -100,8 +101,8 @@ pub trait LogWriter<AWAL: AsyncWAL> {
         serializer: I,
     ) -> io::Result<T>
     where
-        I: FnOnce(AsyncWriteWrapper<AWAL::DataWrite>) -> F + Send + Sync,
-        F: Future<Output = io::Result<(T, AsyncWriteWrapper<AWAL::DataWrite>)>>
+        I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
+        F: Future<Output = io::Result<(T, AsyncWriteWrapper<Self::DataWrite>)>>
             + Send
             + Sync
             + 'async_trait,
@@ -251,20 +252,22 @@ pub struct InstantLogWriter<AWAL> {
 impl<AWAL> InstantLogWriter<AWAL> {
     pub fn new(wal: AWAL) -> Self {
         Self {
-            wal: sync::Mutex::new(wal)
+            wal: sync::Mutex::new(wal),
         }
     }
 }
 
 #[async_trait]
-impl<AWAL: AsyncWAL + Send + Sync> LogWriter<AWAL> for InstantLogWriter<AWAL> {
+impl<AWAL: AsyncWAL + Send + Sync> LogWriter for InstantLogWriter<AWAL> {
+    type DataWrite = AWAL::DataWrite;
+
     async fn command<I, T, F>(
         &self, // TODO Pin?
         serializer: I,
     ) -> io::Result<T>
     where
-        I: FnOnce(AsyncWriteWrapper<AWAL::DataWrite>) -> F + Send + Sync,
-        F: Future<Output = io::Result<(T, AsyncWriteWrapper<AWAL::DataWrite>)>>
+        I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
+        F: Future<Output = io::Result<(T, AsyncWriteWrapper<Self::DataWrite>)>>
             + Send
             + Sync
             + 'async_trait,
@@ -324,12 +327,10 @@ mod tests {
         }
 
         let noop = InstantLogWriter {
-                wal: sync::Mutex::new(
-                MemWal {
-                    data: Default::default(),
-                    indices: Default::default(),
-                },
-            )
+            wal: sync::Mutex::new(MemWal {
+                data: Default::default(),
+                indices: Default::default(),
+            }),
         };
 
         // async fn hello<'a>(mut w: AsyncWriteWrapper<Vec<u8>>) -> io::Result<()> {
@@ -341,7 +342,9 @@ mod tests {
         };
 
         noop.command(hello).await?;
-        let data = Arc::try_unwrap(noop.wal.into_inner().data).unwrap().into_inner();
+        let data = Arc::try_unwrap(noop.wal.into_inner().data)
+            .unwrap()
+            .into_inner();
         assert!(String::from_utf8(data) == Ok("Hello!".to_string()));
         Ok(())
     }
