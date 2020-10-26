@@ -91,22 +91,21 @@ pub trait AsyncWAL {
 /// command() call order.  And as command takes &mut self, only one
 /// command can be written at once.
 #[async_trait]
-pub trait LogWriter {
+pub trait LogWriter<V: Send + Sync + 'static> {
     type DataWrite: AsyncWrite + Send + Sync + Unpin;
     /// Write data to the log, committing it after that.  serializer
     /// is an async function that gets an AsyncWrite to write data,
     /// e.g. with tokio-serde.
-    async fn command<I, T, F>(
+    async fn command<I, F>(
         &self, // TODO Pin?
         serializer: I,
-    ) -> io::Result<T>
+    ) -> io::Result<V>
     where
         I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-        F: Future<Output = io::Result<(T, AsyncWriteWrapper<Self::DataWrite>)>>
+        F: Future<Output = io::Result<(V, AsyncWriteWrapper<Self::DataWrite>)>>
             + Send
             + Sync
-            + 'async_trait,
-        T: Send + 'static;
+            + 'async_trait;
 }
 
 #[async_trait]
@@ -258,20 +257,21 @@ impl<AWAL> InstantLogWriter<AWAL> {
 }
 
 #[async_trait]
-impl<AWAL: AsyncWAL + Send + Sync> LogWriter for InstantLogWriter<AWAL> {
+impl<AWAL: AsyncWAL + Send + Sync, V: Send + Sync + 'static> LogWriter<V>
+    for InstantLogWriter<AWAL>
+{
     type DataWrite = AWAL::DataWrite;
 
-    async fn command<I, T, F>(
+    async fn command<I, F>(
         &self, // TODO Pin?
         serializer: I,
-    ) -> io::Result<T>
+    ) -> io::Result<V>
     where
         I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-        F: Future<Output = io::Result<(T, AsyncWriteWrapper<Self::DataWrite>)>>
+        F: Future<Output = io::Result<(V, AsyncWriteWrapper<Self::DataWrite>)>>
             + Send
             + Sync
             + 'async_trait,
-        T: Send + 'static,
     {
         let mut guard = self.wal.lock().await;
         let (pos, val) = guard.command(serializer).await?;

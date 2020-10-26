@@ -11,7 +11,7 @@ pub struct Register<L> {
 
 impl<L> Register<L>
 where
-    L: storage::LogWriter,
+    L: storage::LogWriter<u64>,
 {
     pub fn new(init: u64, log_writer: L) -> Self {
         Self {

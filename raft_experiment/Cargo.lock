@@ -91,6 +91,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bench_queued"
+version = "0.1.0"
+dependencies = [
+ "bench_common",
+ "liblog",
+ "tokio 0.2.22",
+ "warp",
+]
+
+[[package]]
 name = "bench_single"
 version = "0.1.0"
 dependencies = [
