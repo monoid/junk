@@ -15,4 +15,3 @@ clap = { version = "2.33", features = ["yaml"] }
 serde = "1.0"
 serde_yaml = "0.8"
 byteorder = "1"
-liblog = { path = "../liblog" }

@@ -21,9 +21,11 @@ async fn main() {
             data_file,
             index_file,
             // was: 201.73 trans/sec, on my notebook's SSD
-            // now: 938.42 trans/sec with flush timeout 10 ms.
+            // INCORRECT, BECAUSE BUFFER TOO SMALL:
+            // now: 938.42 trans/sec with flush timeout 10 ms (16 req threads)
             //
             // was ~60 trans/sec on FastVPS' shared HDD.
+            // now: 217.84 with 32 req threads and buffer large enough
             storage::SyncDataFileSyncer::default(),
             //
             // was: 10582.01 trans/sec on my notebook's SSD

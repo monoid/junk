@@ -61,7 +61,7 @@ impl<AWAL: storage::AsyncWAL + Send + 'static, T: Sync + Send + 'static> Queue<A
         flush_timeout: Duration,
     ) -> impl Future<Output = Result<(), tokio::task::JoinError>> {
         let flusher = async move {
-            time::delay_for(flush_timeout).await;
+            time::sleep(flush_timeout).await;
             let mut guard = queue.lock_owned().await;
             // TODO what to do with the error?  Set it somewhere.
             let _ = Queue::flush(&mut guard).await;
@@ -136,6 +136,11 @@ where
                 self.config.flush_timeout,
             )));
         }
+        // TODO: check vector is full after adding the element,
+        // and flush instantly.  It makes benching easier.  Now
+        // optimal number of bench request threads is capacity + 1, with
+        // such modification it is exactly capacity.
+
         // TODO reconsider error handling.  Send err to batched
         // requests in case of io error?
 
