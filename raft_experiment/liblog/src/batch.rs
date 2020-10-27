@@ -7,13 +7,21 @@ use std::time::Duration;
 
 use crate::storage;
 use async_trait::async_trait;
+use futures_util::future::{abortable, AbortHandle, Aborted};
 use tokio::{sync, time};
 
 struct Queue<AWAL: storage::AsyncWAL, T> {
     wal: AWAL,
     index_buf: Vec<AWAL::CommandPos>,
     data_buf: Vec<(T, sync::oneshot::Sender<io::Result<T>>)>,
-    flusher: Option<Box<dyn Future<Output = Result<(), tokio::task::JoinError>> + Send + 'static>>,
+    flusher: Option<(
+        Box<
+            dyn Future<Output = Result<Result<(), Aborted>, tokio::task::JoinError>>
+                + Send
+                + 'static,
+        >,
+        AbortHandle,
+    )>,
 }
 
 impl<AWAL: storage::AsyncWAL + Send + 'static, T: Sync + Send + 'static> Queue<AWAL, T> {
@@ -59,7 +67,10 @@ impl<AWAL: storage::AsyncWAL + Send + 'static, T: Sync + Send + 'static> Queue<A
     fn get_flusher(
         queue: Arc<sync::Mutex<Self>>,
         flush_timeout: Duration,
-    ) -> impl Future<Output = Result<(), tokio::task::JoinError>> {
+    ) -> (
+        Box<dyn Future<Output = Result<Result<(), Aborted>, tokio::task::JoinError>> + Send>,
+        AbortHandle,
+    ) {
         let flusher = async move {
             time::sleep(flush_timeout).await;
             let mut guard = queue.lock_owned().await;
@@ -68,7 +79,11 @@ impl<AWAL: storage::AsyncWAL + Send + 'static, T: Sync + Send + 'static> Queue<A
             // TODO is it even safe?
             guard.flusher = None;
         };
-        tokio::task::spawn(flusher)
+        // We use spawn_local, as there is no point for
+        // running it in a separate thread, as all work
+        // is done under lock gurad.
+        let (flusher, handle) = abortable(flusher);
+        (Box::new(tokio::task::spawn_local(flusher)), handle)
     }
 }
 
@@ -124,17 +139,19 @@ where
         if guard.index_buf.len() == guard.index_buf.capacity() {
             // The buffer is full and have to be flushed.
             // First, remove timeout.
-            guard.flusher = None;
+            if let Some((_, handle)) = guard.flusher.take() {
+                handle.abort();
+            }
             // Now flush and empty the buffer.  Should it be done
             // in a separate thread?  Should timeout aligned to
             // begin of flush or end of flush?
             Queue::flush(&mut guard).await?;
 
             // Reinstall timeout.
-            guard.flusher = Some(Box::new(Queue::get_flusher(
+            guard.flusher = Some(Queue::get_flusher(
                 self.queue.clone(),
                 self.config.flush_timeout,
-            )));
+            ));
         }
         // TODO: check vector is full after adding the element,
         // and flush instantly.  It makes benching easier.  Now
@@ -153,10 +170,10 @@ where
         if self.timeout.is_none() {
             // We have written some data, timeout has to be
             // installed.
-            guard.flusher = Some(Box::new(Queue::get_flusher(
+            guard.flusher = Some(Queue::get_flusher(
                 self.queue.clone(),
                 self.config.flush_timeout,
-            )));
+            ));
         }
         drop(guard); // Explicitly
 

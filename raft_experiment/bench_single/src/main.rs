@@ -1,6 +1,6 @@
-use tokio::fs;
-use liblog::storage;
 use bench_common::server;
+use liblog::storage;
+use tokio::fs;
 
 #[tokio::main]
 async fn main() {
@@ -17,7 +17,8 @@ async fn main() {
             // 10582.01 trans/sec on my notebook's SSD
             // storage::NoopFileSyncer::default(),
         )
-        .await.unwrap(),
+        .await
+        .unwrap(),
     );
     server::main(log_writer).await.unwrap();
 }

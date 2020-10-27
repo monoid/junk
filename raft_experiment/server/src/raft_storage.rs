@@ -1,9 +1,9 @@
-use std::path::PathBuf;
-use std::sync::atomic::AtomicUsize;
+use crate::model;
 use async_raft;
 use async_trait::async_trait;
+use std::path::PathBuf;
+use std::sync::atomic::AtomicUsize;
 use tokio::sync::RwLock;
-use crate::model;
 
 pub struct FileStoreSnapshot {
     pub index: u64,
@@ -51,7 +51,11 @@ impl async_raft::RaftStorage<model::Change, model::ClientResponse> for FileStora
         todo!()
     }
 
-    async fn get_log_entries(&self, start: u64, stop: u64) -> anyhow::Result<Vec<async_raft::raft::Entry<model::Change>>> {
+    async fn get_log_entries(
+        &self,
+        start: u64,
+        stop: u64,
+    ) -> anyhow::Result<Vec<async_raft::raft::Entry<model::Change>>> {
         todo!()
     }
 
@@ -59,19 +63,32 @@ impl async_raft::RaftStorage<model::Change, model::ClientResponse> for FileStora
         todo!()
     }
 
-    async fn append_entry_to_log(&self, entry: &async_raft::raft::Entry<model::Change>) -> anyhow::Result<()> {
+    async fn append_entry_to_log(
+        &self,
+        entry: &async_raft::raft::Entry<model::Change>,
+    ) -> anyhow::Result<()> {
         todo!()
     }
 
-    async fn replicate_to_log(&self, entries: &[async_raft::raft::Entry<model::Change>]) -> anyhow::Result<()> {
+    async fn replicate_to_log(
+        &self,
+        entries: &[async_raft::raft::Entry<model::Change>],
+    ) -> anyhow::Result<()> {
         todo!()
     }
 
-    async fn apply_entry_to_state_machine(&self, index: &u64, data: &model::Change) -> anyhow::Result<model::ClientResponse> {
+    async fn apply_entry_to_state_machine(
+        &self,
+        index: &u64,
+        data: &model::Change,
+    ) -> anyhow::Result<model::ClientResponse> {
         todo!()
     }
 
-    async fn replicate_to_state_machine(&self, entries: &[(&u64, &model::Change)]) -> anyhow::Result<()> {
+    async fn replicate_to_state_machine(
+        &self,
+        entries: &[(&u64, &model::Change)],
+    ) -> anyhow::Result<()> {
         let mut state = self.state.write().await;
         for (index, command) in entries {
             state.last_applied_log = **index;
@@ -80,12 +97,15 @@ impl async_raft::RaftStorage<model::Change, model::ClientResponse> for FileStora
         Ok(())
     }
 
-    async fn do_log_compaction(&self, through: u64) -> anyhow::Result<async_raft::storage::CurrentSnapshotData<Self::Snapshot>> {
+    async fn do_log_compaction(
+        &self,
+        through: u64,
+    ) -> anyhow::Result<async_raft::storage::CurrentSnapshotData<Self::Snapshot>> {
         let data = {
             let state = self.state.read().await;
             (*state).clone()
         };
-        
+
         todo!()
     }
 
@@ -94,13 +114,19 @@ impl async_raft::RaftStorage<model::Change, model::ClientResponse> for FileStora
     }
 
     async fn finalize_snapshot_installation(
-        &self, index: u64, term: u64, delete_through: Option<u64>,
-        id: String, snapshot: Box<Self::Snapshot>,
+        &self,
+        index: u64,
+        term: u64,
+        delete_through: Option<u64>,
+        id: String,
+        snapshot: Box<Self::Snapshot>,
     ) -> anyhow::Result<()> {
         todo!()
     }
 
-    async fn get_current_snapshot(&self) -> anyhow::Result<Option<async_raft::storage::CurrentSnapshotData<Self::Snapshot>>> {
+    async fn get_current_snapshot(
+        &self,
+    ) -> anyhow::Result<Option<async_raft::storage::CurrentSnapshotData<Self::Snapshot>>> {
         todo!()
     }
 }

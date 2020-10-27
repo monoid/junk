@@ -5,7 +5,9 @@ use std::sync::Arc;
 use warp::Filter;
 
 // TODO: make AsyncWAL and LogWriter a type arguments.
-pub async fn main<LW: storage::LogWriter<u64> + Sync + Send + 'static>(log_writer: LW) -> io::Result<()> {
+pub async fn main<LW: storage::LogWriter<u64> + Sync + Send + 'static>(
+    log_writer: LW,
+) -> io::Result<()> {
     let reg = Arc::new(Register::new(0, log_writer));
 
     let routes = warp::post()
