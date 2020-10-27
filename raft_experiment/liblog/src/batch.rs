@@ -88,9 +88,6 @@ impl<AWAL: storage::AsyncWAL + Send + 'static, T: Sync + Send + 'static> Queue<A
 }
 
 pub struct BatchLogWriter<AWAL: storage::AsyncWAL, T> {
-    // TODO: how to change timeout? Should it be behind
-    // mutex as well?
-    timeout: Option<Box<dyn Future<Output = ()> + Send + Sync>>,
     /// Both WAL and CommandPos buffer.
     // TODO: Vec is autoresizable.  Find something not resizable, perhaps.
     queue: Arc<sync::Mutex<Queue<AWAL, T>>>,
@@ -109,7 +106,6 @@ impl<AWAL: storage::AsyncWAL + Sync + Send + 'static, T: Sync + Send + 'static>
         // TODO: check record_count and fail if it is zero; or use
         // max(1, record_count).
         Self {
-            timeout: None,
             queue: Arc::new(sync::Mutex::new(Queue::new(wal, config.record_count))),
             config,
         }
@@ -167,7 +163,7 @@ where
         guard.index_buf.push(pos);
         guard.data_buf.push((val, sender));
 
-        if self.timeout.is_none() {
+        if guard.flusher.is_none() {
             // We have written some data, timeout has to be
             // installed.
             guard.flusher = Some(Queue::get_flusher(
