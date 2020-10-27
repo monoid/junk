@@ -72,7 +72,7 @@ impl<AWAL: storage::AsyncWAL + Send + 'static, T: Sync + Send + 'static> Queue<A
         AbortHandle,
     ) {
         let flusher = async move {
-            time::sleep(flush_timeout).await;
+            time::delay_for(flush_timeout).await;
             let mut guard = queue.lock_owned().await;
             // TODO what to do with the error?  Set it somewhere.
             let _ = Queue::flush(&mut guard).await;
