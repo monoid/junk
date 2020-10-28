@@ -7,21 +7,15 @@ use std::time::Duration;
 
 use crate::storage;
 use async_trait::async_trait;
-use futures_util::future::{abortable, AbortHandle, Aborted};
+use futures_util::future::{abortable, AbortHandle};
+use tokio::task::JoinHandle;
 use tokio::{sync, time};
 
 struct Queue<AWAL: storage::AsyncWAL, T> {
     wal: AWAL,
     index_buf: Vec<AWAL::CommandPos>,
     data_buf: Vec<(T, sync::oneshot::Sender<io::Result<T>>)>,
-    flusher: Option<(
-        Box<
-            dyn Future<Output = Result<Result<(), Aborted>, tokio::task::JoinError>>
-                + Send
-                + 'static,
-        >,
-        AbortHandle,
-    )>,
+    flusher: Option<(JoinHandle<()>, AbortHandle)>,
 }
 
 impl<AWAL: storage::AsyncWAL + Send + 'static, T: Sync + Send + 'static> Queue<AWAL, T> {
@@ -67,23 +61,21 @@ impl<AWAL: storage::AsyncWAL + Send + 'static, T: Sync + Send + 'static> Queue<A
     fn get_flusher(
         queue: Arc<sync::Mutex<Self>>,
         flush_timeout: Duration,
-    ) -> (
-        Box<dyn Future<Output = Result<Result<(), Aborted>, tokio::task::JoinError>> + Send>,
-        AbortHandle,
-    ) {
+    ) -> (JoinHandle<()>, AbortHandle) {
+        let delay = time::delay_for(flush_timeout);
+        let (delay, handle) = abortable(delay);
+
         let flusher = async move {
-            time::delay_for(flush_timeout).await;
-            let mut guard = queue.lock_owned().await;
-            // TODO what to do with the error?  Set it somewhere.
-            let _ = Queue::flush(&mut guard).await;
-            // TODO is it even safe?
-            guard.flusher = None;
+            if delay.await.is_ok() {
+                let mut guard = queue.lock_owned().await;
+                // TODO what to do with the error?  Set it somewhere.
+                let _ = Queue::flush(&mut guard).await;
+                // Dropping nor JoinHandle nor AbortHandle does not
+                // affect the current task.
+                guard.flusher = None;
+            }
         };
-        // We use spawn_local, as there is no point for
-        // running it in a separate thread, as all work
-        // is done under lock gurad.
-        let (flusher, handle) = abortable(flusher);
-        (Box::new(tokio::task::spawn_local(flusher)), handle)
+        (tokio::task::spawn(flusher), handle)
     }
 }
 
