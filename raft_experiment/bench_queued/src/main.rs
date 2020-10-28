@@ -9,7 +9,7 @@ async fn main() {
     let data_file = fs::File::create("data.txt").await.unwrap();
     let index_file = fs::File::create("index.bin").await.unwrap();
     let config = batch::BatchLogConfig {
-        record_count: 10,
+        record_count: 31,
         // SSD:
         flush_timeout: Duration::from_millis(1000 / 100),
         // HDD:
@@ -21,11 +21,11 @@ async fn main() {
             data_file,
             index_file,
             // was: 201.73 trans/sec, on my notebook's SSD
-            // INCORRECT, BECAUSE BUFFER TOO SMALL:
-            // now: 938.42 trans/sec with flush timeout 10 ms (16 req threads)
+            // now: 4301 with 32 req threads and buffer of 31
             //
             // was ~60 trans/sec on FastVPS' shared HDD.
-            // now: 217.84 with 32 req threads and buffer large enough
+            // now 1800 trans/sec with 32 threads and buffer of 31
+            //     2305 trans/sec with 64 threads and buffer of 63
             storage::SyncDataFileSyncer::default(),
             //
             // was: 10582.01 trans/sec on my notebook's SSD
