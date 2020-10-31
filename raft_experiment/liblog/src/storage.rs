@@ -137,14 +137,20 @@ impl FileSyncer for SyncDataFileSyncer {
     }
 }
 
-/// Simple log with data and index files.
+async fn trim_log<S: FileSyncer>(file: &mut fs::File, len: u64, sync: &S) -> io::Result<()> {
+    file.seek(SeekFrom::Start(len)).await?;
+    file.set_len(len).await?;
+    sync.sync(file).await
+}
+
+/// Simple log with data and index files; synced with FileSyncer.
 pub struct SimpleFileWAL<S> {
     data_file: Arc<sync::Mutex<fs::File>>,
     index_file: fs::File,
     sync: S,
 }
 
-impl<S> SimpleFileWAL<S> {
+impl<S: FileSyncer> SimpleFileWAL<S> {
     /// Parse index_file, finding last commited data position.
     /// Truncate offset file and data file if incomplete or uncommited
     /// data is found.
@@ -175,21 +181,18 @@ impl<S> SimpleFileWAL<S> {
             };
 
             if data_committed_pos + data_size <= data_len {
+                // TODO: read state
                 data_committed_pos += data_size;
                 offset_offset += std::mem::size_of::<u64>() as u64;
             } else {
                 break;
             }
         }
-        index_file.seek(SeekFrom::Start(offset_offset)).await?;
-        // TODO: log offsets truncation.
-        index_file.set_len(offset_offset).await?;
-        index_file.sync_data().await?;
 
-        data_file.seek(SeekFrom::Start(data_committed_pos)).await?;
+        // TODO: log offsets truncation.
+        trim_log(&mut index_file, offset_offset, &sync).await?;
         // TODO: log data truncation.
-        data_file.set_len(data_committed_pos).await?;
-        data_file.sync_data().await?;
+        trim_log(&mut data_file, data_committed_pos, &sync).await?;
 
         Ok(Self {
             data_file: Arc::new(sync::Mutex::new(data_file)),

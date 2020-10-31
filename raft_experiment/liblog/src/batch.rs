@@ -81,16 +81,16 @@ impl<AWAL: storage::AsyncWAL<Error = io::Error> + Send + 'static, T: Sync + Send
     }
 }
 
+pub struct BatchLogConfig {
+    pub record_count: usize,
+    pub flush_timeout: Duration,
+}
+
 pub struct BatchLogWriter<AWAL: storage::AsyncWAL, T> {
     /// Both WAL and CommandPos buffer.
     // TODO: Vec is autoresizable.  Find something not resizable, perhaps.
     queue: Arc<sync::Mutex<Queue<AWAL, T>>>,
     config: BatchLogConfig,
-}
-
-pub struct BatchLogConfig {
-    pub record_count: usize,
-    pub flush_timeout: Duration,
 }
 
 impl<
