@@ -18,7 +18,9 @@ struct Queue<AWAL: storage::AsyncWAL, T> {
     flusher: Option<(JoinHandle<()>, AbortHandle)>,
 }
 
-impl<AWAL: storage::AsyncWAL + Send + 'static, T: Sync + Send + 'static> Queue<AWAL, T> {
+impl<AWAL: storage::AsyncWAL<Error = io::Error> + Send + 'static, T: Sync + Send + 'static>
+    Queue<AWAL, T>
+{
     fn new(wal: AWAL, capacity: usize) -> Self {
         Self {
             wal,
@@ -28,7 +30,7 @@ impl<AWAL: storage::AsyncWAL + Send + 'static, T: Sync + Send + 'static> Queue<A
         }
     }
 
-    async fn flush(guard: &mut sync::OwnedMutexGuard<Queue<AWAL, T>>) -> io::Result<()> {
+    async fn flush(guard: &mut sync::OwnedMutexGuard<Queue<AWAL, T>>) -> Result<(), AWAL::Error> {
         let queue: &mut Queue<AWAL, T> = &mut *guard;
         let index_buf = &mut queue.index_buf;
         let wal = &mut queue.wal;
@@ -91,8 +93,10 @@ pub struct BatchLogConfig {
     pub flush_timeout: Duration,
 }
 
-impl<AWAL: storage::AsyncWAL + Sync + Send + 'static, T: Sync + Send + 'static>
-    BatchLogWriter<AWAL, T>
+impl<
+        AWAL: storage::AsyncWAL<Error = io::Error> + Sync + Send + 'static,
+        T: Sync + Send + 'static,
+    > BatchLogWriter<AWAL, T>
 {
     pub fn new(wal: AWAL, config: BatchLogConfig) -> Self {
         // TODO: check record_count and fail if it is zero; or use
@@ -107,10 +111,11 @@ impl<AWAL: storage::AsyncWAL + Sync + Send + 'static, T: Sync + Send + 'static>
 #[async_trait]
 impl<AWAL, V> storage::LogWriter<V> for BatchLogWriter<AWAL, V>
 where
-    AWAL: storage::AsyncWAL + Sync + Send + 'static,
+    AWAL: storage::AsyncWAL<Error = io::Error> + Sync + Send + 'static,
     V: Sync + Send + 'static,
 {
     type DataWrite = AWAL::DataWrite;
+    type Error = AWAL::Error;
 
     async fn command<I, F>(
         &self, // TODO Pin?  Arc?
@@ -118,7 +123,7 @@ where
     ) -> std::io::Result<V>
     where
         I: FnOnce(storage::AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-        F: Future<Output = std::io::Result<(V, storage::AsyncWriteWrapper<Self::DataWrite>)>>
+        F: Future<Output = Result<(V, storage::AsyncWriteWrapper<Self::DataWrite>), Self::Error>>
             + Send
             + Sync
             + 'async_trait,

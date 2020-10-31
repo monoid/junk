@@ -1,5 +1,4 @@
 use liblog::storage;
-use std::io;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync;
@@ -25,7 +24,7 @@ where
         }
     }
 
-    pub async fn add_value(self: Arc<Self>, add: u64) -> io::Result<u64> {
+    pub async fn add_value(self: Arc<Self>, add: u64) -> Result<u64, L::Error> {
         self.log_writer
             .command(move |mut w| async move {
                 // w.write_all(&add.to_ne_bytes()).await.map(|_| (add, w))

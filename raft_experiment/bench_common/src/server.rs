@@ -28,6 +28,6 @@ where
 {
     match reg.add_value(val).await {
         Ok(res) => Ok(format!("You got {}.\n", res)),
-        Err(e) => Ok(format!("Error: {}", e.to_string())),
+        Err(e) => Ok(format!("Error: {}", e)),
     }
 }
