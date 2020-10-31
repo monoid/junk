@@ -10,3 +10,4 @@ edition = "2018"
 async-trait = "0.1"
 tokio = { version = "0.2", features = ["fs", "macros", "sync", "rt-util", "time"] }
 futures-util = "0.3"
+thiserror = "1.0"

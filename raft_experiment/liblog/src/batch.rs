@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::future::Future;
 use std::io;
 /// Special LogWriter that writes commands in batches.
@@ -5,21 +6,37 @@ use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::storage;
+use crate::storage::{self, SimpleFileWALError};
 use async_trait::async_trait;
 use futures_util::future::{abortable, AbortHandle};
+use thiserror::Error;
 use tokio::task::JoinHandle;
 use tokio::{sync, time};
+
+#[derive(Error, Debug)]
+pub enum BatchLogError {
+    #[error(transparent)]
+    Nested(Arc<SimpleFileWALError>),
+    #[error("{file}:{line} {msg}: {nested}")]
+    NestedDyn {
+        file: &'static str,
+        line: u32,
+        msg: &'static str,
+        nested: Arc<Box<dyn Error + Send + Sync + 'static>>,
+    },
+}
 
 struct Queue<AWAL: storage::AsyncWAL, T> {
     wal: AWAL,
     index_buf: Vec<AWAL::CommandPos>,
-    data_buf: Vec<(T, sync::oneshot::Sender<io::Result<T>>)>,
+    data_buf: Vec<(T, sync::oneshot::Sender<Result<T, BatchLogError>>)>,
     flusher: Option<(JoinHandle<()>, AbortHandle)>,
 }
 
-impl<AWAL: storage::AsyncWAL<Error = io::Error> + Send + 'static, T: Sync + Send + 'static>
-    Queue<AWAL, T>
+impl<
+        AWAL: storage::AsyncWAL<Error = SimpleFileWALError> + Send + 'static,
+        T: Sync + Send + 'static,
+    > Queue<AWAL, T>
 {
     fn new(wal: AWAL, capacity: usize) -> Self {
         Self {
@@ -30,14 +47,14 @@ impl<AWAL: storage::AsyncWAL<Error = io::Error> + Send + 'static, T: Sync + Send
         }
     }
 
-    async fn flush(guard: &mut sync::OwnedMutexGuard<Queue<AWAL, T>>) -> Result<(), AWAL::Error> {
+    async fn flush(guard: &mut sync::OwnedMutexGuard<Queue<AWAL, T>>) -> Result<(), BatchLogError> {
         let queue: &mut Queue<AWAL, T> = &mut *guard;
         let index_buf = &mut queue.index_buf;
         let wal = &mut queue.wal;
         let indices_res = wal.indices(index_buf).await;
         index_buf.clear();
 
-        match &indices_res {
+        match indices_res {
             Ok(()) => {
                 // TODO: Possible improvement: replace Vec with new one, and
                 // send data in another thread.
@@ -46,18 +63,20 @@ impl<AWAL: storage::AsyncWAL<Error = io::Error> + Send + 'static, T: Sync + Send
                     // receiver has gone?  I couldn't care less.
                     let _ = tx.send(Ok(val));
                 }
+                Ok(())
             }
             Err(e) => {
+                let e = Arc::new(e);
                 for (_, tx) in guard.data_buf.drain(..) {
                     // There is no point of handling the .send result.  The
                     // receiver has gone?  I couldn't care less.
                     // KLUDGE: reconsider error handling.
                     // TODO error context?
-                    let _ = tx.send(Err(io::Error::new(e.kind(), "WAL indices flush failed.")));
+                    let _ = tx.send(Err(BatchLogError::Nested(e.clone())));
                 }
+                Err(BatchLogError::Nested(e))
             }
         }
-        indices_res
     }
 
     fn get_flusher(
@@ -94,7 +113,7 @@ pub struct BatchLogWriter<AWAL: storage::AsyncWAL, T> {
 }
 
 impl<
-        AWAL: storage::AsyncWAL<Error = io::Error> + Sync + Send + 'static,
+        AWAL: storage::AsyncWAL<Error = SimpleFileWALError> + Sync + Send + 'static,
         T: Sync + Send + 'static,
     > BatchLogWriter<AWAL, T>
 {
@@ -111,19 +130,19 @@ impl<
 #[async_trait]
 impl<AWAL, V> storage::LogWriter<V> for BatchLogWriter<AWAL, V>
 where
-    AWAL: storage::AsyncWAL<Error = io::Error> + Sync + Send + 'static,
+    AWAL: storage::AsyncWAL<Error = SimpleFileWALError> + Sync + Send + 'static,
     V: Sync + Send + 'static,
 {
     type DataWrite = AWAL::DataWrite;
-    type Error = AWAL::Error;
+    type Error = BatchLogError;
 
     async fn command<I, F>(
         &self, // TODO Pin?  Arc?
         serializer: I,
-    ) -> std::io::Result<V>
+    ) -> Result<V, Self::Error>
     where
         I: FnOnce(storage::AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-        F: Future<Output = Result<(V, storage::AsyncWriteWrapper<Self::DataWrite>), Self::Error>>
+        F: Future<Output = io::Result<(V, storage::AsyncWriteWrapper<Self::DataWrite>)>>
             + Send
             + Sync
             + 'async_trait,
@@ -155,7 +174,11 @@ where
         // requests in case of io error?
 
         // Invariant: now buffer has some space.
-        let (pos, val) = guard.wal.command(serializer).await?;
+        let (pos, val) = guard
+            .wal
+            .command(serializer)
+            .await
+            .map_err(|e| BatchLogError::Nested(Arc::new(e)))?;
         let (sender, receiver) = sync::oneshot::channel();
         guard.index_buf.push(pos);
         guard.data_buf.push((val, sender));
@@ -181,7 +204,13 @@ where
             // Or, as all implementation of LogWriter are internal,
             // we may define a common error type for all cases.
             // TODO: unwrap?  Is it even possible that sender is dropped?
-            Err(_) => Err(io::Error::new(io::ErrorKind::BrokenPipe, "oneshot failed")),
+            // tokio::sync::oneshot::error::RecvError
+            Err(e) => Err(BatchLogError::NestedDyn {
+                file: file!(),
+                line: line!(),
+                msg: "can't happen: invalid transmitter of the BatchLogWriter",
+                nested: Arc::new(Box::new(e)),
+            }),
         }
     }
 }

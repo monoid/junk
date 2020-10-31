@@ -1,4 +1,3 @@
-use std::convert::From;
 use std::error::Error;
 use std::future::Future;
 use std::io::SeekFrom;
@@ -7,6 +6,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use thiserror::Error;
 use tokio::io::{self, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::{fs, sync};
 
@@ -60,7 +60,7 @@ pub trait AsyncWAL {
     // AsyncWAL in same project out of testing scope is not expected.
     type DataWrite: AsyncWrite + Send + Sync + Unpin;
     type CommandPos: Clone + Send + Sync + 'static;
-    type Error: From<io::Error> + Error + Send + Sync + 'static;
+    type Error: Error + Send + Sync + 'static;
 
     /// Executes command that writes data to AsyncWriteWrapper.
     async fn command<I, T, F>(
@@ -143,6 +143,16 @@ async fn trim_log<S: FileSyncer>(file: &mut fs::File, len: u64, sync: &S) -> io:
     sync.sync(file).await
 }
 
+#[derive(Error, Debug)]
+pub enum SimpleFileWALError {
+    #[error("failed to write log data")]
+    DataFailure(io::Error),
+    #[error("failed to write index data")]
+    IndexFailure(io::Error),
+}
+
+use SimpleFileWALError::*;
+
 /// Simple log with data and index files; synced with FileSyncer.
 pub struct SimpleFileWAL<S> {
     data_file: Arc<sync::Mutex<fs::File>>,
@@ -159,14 +169,20 @@ impl<S: FileSyncer> SimpleFileWAL<S> {
         mut data_file: fs::File,
         mut index_file: fs::File,
         sync: S,
-    ) -> io::Result<Self> {
+    ) -> Result<Self, SimpleFileWALError> {
         let mut data_committed_pos: u64 = 0;
         // We have learned the size, but move position to the end.
         // We get proper position from the index_file, and then
         // seek to it later (actually, this is a point of this method).
-        let data_len = data_file.seek(SeekFrom::End(0)).await?;
+        let data_len = data_file
+            .seek(SeekFrom::End(0))
+            .await
+            .map_err(DataFailure)?;
 
-        index_file.seek(SeekFrom::Start(0)).await?;
+        index_file
+            .seek(SeekFrom::Start(0))
+            .await
+            .map_err(IndexFailure)?;
 
         let mut data_size: u64;
         // Valid offset known so far.
@@ -190,9 +206,13 @@ impl<S: FileSyncer> SimpleFileWAL<S> {
         }
 
         // TODO: log offsets truncation.
-        trim_log(&mut index_file, offset_offset, &sync).await?;
+        trim_log(&mut index_file, offset_offset, &sync)
+            .await
+            .map_err(IndexFailure)?;
         // TODO: log data truncation.
-        trim_log(&mut data_file, data_committed_pos, &sync).await?;
+        trim_log(&mut data_file, data_committed_pos, &sync)
+            .await
+            .map_err(DataFailure)?;
 
         Ok(Self {
             data_file: Arc::new(sync::Mutex::new(data_file)),
@@ -201,16 +221,20 @@ impl<S: FileSyncer> SimpleFileWAL<S> {
         })
     }
 
-    pub async fn open<P: AsRef<Path>>(data_path: P, offsets_path: P, sync: S) -> io::Result<Self> {
+    pub async fn open<P: AsRef<Path>>(
+        data_path: P,
+        index_path: P,
+        sync: S,
+    ) -> Result<Self, SimpleFileWALError> {
         let log_options = {
             let mut log_options = fs::OpenOptions::new();
             log_options.read(true).write(true).create(true);
             log_options
         };
         // TODO advisory lock?
-        let data_file = log_options.open(data_path).await?;
-        let offsets_file = log_options.open(offsets_path).await?;
-        Self::new(data_file, offsets_file, sync).await
+        let data_file = log_options.open(data_path).await.map_err(DataFailure)?;
+        let index_file = log_options.open(index_path).await.map_err(IndexFailure)?;
+        Self::new(data_file, index_file, sync).await
     }
 }
 
@@ -218,7 +242,7 @@ impl<S: FileSyncer> SimpleFileWAL<S> {
 impl<S: FileSyncer> AsyncWAL for SimpleFileWAL<S> {
     type DataWrite = fs::File;
     type CommandPos = u64;
-    type Error = io::Error;
+    type Error = SimpleFileWALError;
 
     async fn command<I, T, F>(
         &mut self, // TODO Pin?
@@ -230,22 +254,35 @@ impl<S: FileSyncer> AsyncWAL for SimpleFileWAL<S> {
         T: Send + 'static,
     {
         let mut data_write = self.data_file.clone().lock_owned().await;
-        let orig_pos = data_write.seek(SeekFrom::Current(0)).await?;
-        let (v, AsyncWriteWrapper(mut data_write)) =
-            serializer(AsyncWriteWrapper(data_write)).await?;
-        let new_pos = data_write.seek(SeekFrom::Current(0)).await?;
+        let orig_pos = data_write
+            .seek(SeekFrom::Current(0))
+            .await
+            .map_err(DataFailure)?;
+        let (v, AsyncWriteWrapper(mut data_write)) = serializer(AsyncWriteWrapper(data_write))
+            .await
+            .map_err(DataFailure)?;
+        let new_pos = data_write
+            .seek(SeekFrom::Current(0))
+            .await
+            .map_err(DataFailure)?;
         Ok((new_pos - orig_pos, v))
     }
 
     async fn indices(&mut self, pos: &[Self::CommandPos]) -> Result<(), Self::Error> {
         {
             let mut data_write = self.data_file.lock().await;
-            self.sync.sync(&mut data_write).await?;
+            self.sync.sync(&mut data_write).await.map_err(DataFailure)?;
         }
         for p in pos {
-            self.index_file.write_all(&p.to_ne_bytes()).await?;
+            self.index_file
+                .write_all(&p.to_ne_bytes())
+                .await
+                .map_err(IndexFailure)?;
         }
-        self.sync.sync(&mut self.index_file).await?;
+        self.sync
+            .sync(&mut self.index_file)
+            .await
+            .map_err(IndexFailure)?;
         Ok(())
     }
 }
@@ -265,7 +302,7 @@ impl<AWAL> InstantLogWriter<AWAL> {
 }
 
 #[async_trait]
-impl<AWAL: AsyncWAL<Error = io::Error> + Send + Sync, V: Send + Sync + 'static> LogWriter<V>
+impl<AWAL: AsyncWAL + Send + Sync, V: Send + Sync + 'static> LogWriter<V>
     for InstantLogWriter<AWAL>
 {
     type DataWrite = AWAL::DataWrite;

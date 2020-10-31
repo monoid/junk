@@ -656,6 +656,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures-util",
+ "thiserror",
  "tokio 0.2.22",
 ]
 
