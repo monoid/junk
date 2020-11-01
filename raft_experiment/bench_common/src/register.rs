@@ -28,9 +28,12 @@ where
         self.log_writer
             .command(move |mut w| async move {
                 // w.write_all(&add.to_ne_bytes()).await.map(|_| (add, w))
-                w.write_all(&format!("{}\n", add).as_bytes())
-                    .await
-                    .map(|_| (add, w))
+                (
+                    w.write_all(&format!("{}\n", add).as_bytes())
+                        .await
+                        .map(|_| add),
+                    w,
+                )
             })
             .await?;
         let mut value_guard = self.value.lock().await;

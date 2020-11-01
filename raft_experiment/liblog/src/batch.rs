@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::error::Error;
 use std::future::Future;
 use std::io;
@@ -13,15 +14,18 @@ use thiserror::Error;
 use tokio::task::JoinHandle;
 use tokio::{sync, time};
 
+// TODO: pass some context for Error handling.
+// Define Command trait that both provides context and
+// defines data to store.  Box<dyn Command>, like this.
 #[derive(Error, Debug)]
 pub enum BatchLogError {
     #[error(transparent)]
     Nested(Arc<SimpleFileWALError>),
-    #[error("{file}:{line} {msg}: {nested}")]
-    NestedDyn {
+    #[error("{file}:{line} CANTHAPPEN: {msg}: {nested}")]
+    CantHappen {
         file: &'static str,
         line: u32,
-        msg: &'static str,
+        msg: Cow<'static, str>,
         nested: Arc<Box<dyn Error + Send + Sync + 'static>>,
     },
 }
@@ -57,7 +61,7 @@ impl<
         match indices_res {
             Ok(()) => {
                 // TODO: Possible improvement: replace Vec with new one, and
-                // send data in another thread.
+                // send data in another thread.  There are no fatal errors.
                 for (val, tx) in guard.data_buf.drain(..) {
                     // There is no point of handling the .send result.  The
                     // receiver has gone?  I couldn't care less.
@@ -70,8 +74,8 @@ impl<
                 for (_, tx) in guard.data_buf.drain(..) {
                     // There is no point of handling the .send result.  The
                     // receiver has gone?  I couldn't care less.
-                    // KLUDGE: reconsider error handling.
-                    // TODO error context?
+
+                    // TODO error context for Nested?
                     let _ = tx.send(Err(BatchLogError::Nested(e.clone())));
                 }
                 Err(BatchLogError::Nested(e))
@@ -142,7 +146,7 @@ where
     ) -> Result<V, Self::Error>
     where
         I: FnOnce(storage::AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-        F: Future<Output = io::Result<(V, storage::AsyncWriteWrapper<Self::DataWrite>)>>
+        F: Future<Output = (io::Result<V>, storage::AsyncWriteWrapper<Self::DataWrite>)>
             + Send
             + Sync
             + 'async_trait,
@@ -171,7 +175,9 @@ where
         // such modification it is exactly capacity.
 
         // TODO reconsider error handling.  Send err to batched
-        // requests in case of io error?
+        // requests in case of io error? The requests get stuck.
+        // On another hand, the only possible thing is to restart?
+        // TODO: AsyncWAL has to rollback on failure.
 
         // Invariant: now buffer has some space.
         let (pos, val) = guard
@@ -195,20 +201,13 @@ where
 
         match receiver.await {
             Ok(r) => r,
-            // KLUDGE
-
-            // TODO: Error type is an associated type of LogWriter
-            // (and AsyncAWAIT?); pass some context for Error handling.
-            // Define Command trait that both provides context and
-            // defines data to store.  Box<dyn Command>, like this.
-            // Or, as all implementation of LogWriter are internal,
-            // we may define a common error type for all cases.
-            // TODO: unwrap?  Is it even possible that sender is dropped?
+            // Please note that this is not a fatal error, as it relates
+            // single request only.
             // tokio::sync::oneshot::error::RecvError
-            Err(e) => Err(BatchLogError::NestedDyn {
+            Err(e) => Err(BatchLogError::CantHappen {
                 file: file!(),
                 line: line!(),
-                msg: "can't happen: invalid transmitter of the BatchLogWriter",
+                msg: Cow::from("found closed oneshot::Sender in the BatchLogWriter"),
                 nested: Arc::new(Box::new(e)),
             }),
         }

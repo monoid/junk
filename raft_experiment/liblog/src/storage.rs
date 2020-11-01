@@ -69,12 +69,10 @@ pub trait AsyncWAL {
     ) -> Result<(Self::CommandPos, T), Self::Error>
     where
         I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-        // TODO: return (Result<T>, AWW), not Result<(T, AWW)>.
-        // OTOH, it is neither convenient to handle nor required.
-        F: Future<Output = io::Result<(T, AsyncWriteWrapper<Self::DataWrite>)>> + Send + Sync,
+        F: Future<Output = (io::Result<T>, AsyncWriteWrapper<Self::DataWrite>)> + Send + Sync,
         T: Send + 'static;
-    /// Appends data to index file.  For durabale file store, it has
-    /// to flush data file, write index and then flush index.  But
+    /// Appends data(s) to index file.  For durabale file store, it
+    /// has to flush data file, write index and then flush index.  But
     /// lightweight implementations for non-durable tests may skip
     /// flushing.  Of course, in-memory implementation do not need
     /// flush at all.
@@ -106,7 +104,7 @@ pub trait LogWriter<V: Send + Sync + 'static> {
     ) -> Result<V, Self::Error>
     where
         I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-        F: Future<Output = io::Result<(V, AsyncWriteWrapper<Self::DataWrite>)>>
+        F: Future<Output = (io::Result<V>, AsyncWriteWrapper<Self::DataWrite>)>
             + Send
             + Sync
             + 'async_trait;
@@ -149,6 +147,8 @@ pub enum SimpleFileWALError {
     DataFailure(io::Error),
     #[error("failed to write index data")]
     IndexFailure(io::Error),
+    #[error("failed to write index data: {0}, and failed to rollback: {1}")]
+    DataFatalFailure(io::Error, io::Error),
 }
 
 use SimpleFileWALError::*;
@@ -250,7 +250,7 @@ impl<S: FileSyncer> AsyncWAL for SimpleFileWAL<S> {
     ) -> Result<(Self::CommandPos, T), Self::Error>
     where
         I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-        F: Future<Output = io::Result<(T, AsyncWriteWrapper<Self::DataWrite>)>> + Send + Sync,
+        F: Future<Output = (io::Result<T>, AsyncWriteWrapper<Self::DataWrite>)> + Send + Sync,
         T: Send + 'static,
     {
         let mut data_write = self.data_file.clone().lock_owned().await;
@@ -258,9 +258,16 @@ impl<S: FileSyncer> AsyncWAL for SimpleFileWAL<S> {
             .seek(SeekFrom::Current(0))
             .await
             .map_err(DataFailure)?;
-        let (v, AsyncWriteWrapper(mut data_write)) = serializer(AsyncWriteWrapper(data_write))
-            .await
-            .map_err(DataFailure)?;
+        let (v, mut data_write) = match serializer(AsyncWriteWrapper(data_write)).await {
+            (Ok(v), AsyncWriteWrapper(data_write)) => (Ok((v, data_write))),
+            (Err(e), AsyncWriteWrapper(mut data_write)) => {
+                let rollback_res = trim_log(&mut data_write, orig_pos, &self.sync).await;
+                match rollback_res {
+                    Ok(()) => Err(DataFailure(e)),
+                    Err(rollback_err) => Err(DataFatalFailure(e, rollback_err)),
+                }
+            }
+        }?;
         let new_pos = data_write
             .seek(SeekFrom::Current(0))
             .await
@@ -314,7 +321,7 @@ impl<AWAL: AsyncWAL + Send + Sync, V: Send + Sync + 'static> LogWriter<V>
     ) -> Result<V, Self::Error>
     where
         I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-        F: Future<Output = io::Result<(V, AsyncWriteWrapper<Self::DataWrite>)>>
+        F: Future<Output = (io::Result<V>, AsyncWriteWrapper<Self::DataWrite>)>
             + Send
             + Sync
             + 'async_trait,
@@ -352,7 +359,7 @@ mod tests {
             ) -> io::Result<(Self::CommandPos, T)>
             where
                 I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-                F: Future<Output = io::Result<(T, AsyncWriteWrapper<Self::DataWrite>)>>
+                F: Future<Output = (io::Result<T>, AsyncWriteWrapper<Self::DataWrite>)>
                     + Send
                     + Sync,
                 T: Send + 'static,
