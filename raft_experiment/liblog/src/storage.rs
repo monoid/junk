@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::future::Future;
 use std::io::SeekFrom;
+use std::ops::DerefMut;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -22,11 +23,15 @@ use tokio::{fs, sync};
  */
 
 /// Safety wrapper to hide underlying file (e.g. to hide file methods
-/// like seek, thus stream is append-only for the user).  You can use
-/// it as any AsyncWrite.
-pub struct AsyncWriteWrapper<T: AsyncWrite + Send + Sync>(pub(crate) sync::OwnedMutexGuard<T>);
+/// like seek, thus stream is append-only for the user) or other type.
+/// Implements AsyncWrite.
+pub struct AsyncWriteWrapper<W: AsyncWrite + Unpin, H: DerefMut<Target = W> + Send + Sync>(
+    pub(crate) H,
+);
 
-impl<T: AsyncWrite + Send + Sync + Unpin> AsyncWrite for AsyncWriteWrapper<T> {
+impl<W: AsyncWrite + Unpin, H: DerefMut<Target = W> + Send + Sync + Unpin> AsyncWrite
+    for AsyncWriteWrapper<W, H>
+{
     fn poll_write(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -58,7 +63,8 @@ pub trait AsyncWAL {
     // The alternative is dyn Write.  Associated type doesn't allow
     // using same F for different AsyncWAL.  OTOH using different
     // AsyncWAL in same project out of testing scope is not expected.
-    type DataWrite: AsyncWrite + Send + Sync + Unpin;
+    type Write: AsyncWrite + Unpin;
+    type WriteHolder: DerefMut<Target = Self::Write> + Send + Sync + Unpin;
     type CommandPos: Clone + Send + Sync + 'static;
     type Error: Error + Send + Sync + 'static;
 
@@ -68,8 +74,14 @@ pub trait AsyncWAL {
         serializer: I,
     ) -> Result<(Self::CommandPos, T), Self::Error>
     where
-        I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-        F: Future<Output = (io::Result<T>, AsyncWriteWrapper<Self::DataWrite>)> + Send + Sync,
+        I: FnOnce(AsyncWriteWrapper<Self::Write, Self::WriteHolder>) -> F + Send + Sync,
+        F: Future<
+                Output = (
+                    io::Result<T>,
+                    AsyncWriteWrapper<Self::Write, Self::WriteHolder>,
+                ),
+            > + Send
+            + Sync,
         T: Send + 'static;
     /// Appends data(s) to index file.  For durabale file store, it
     /// has to flush data file, write index and then flush index.  But
@@ -93,7 +105,8 @@ pub trait AsyncWAL {
 /// command can be written at once.
 #[async_trait]
 pub trait LogWriter<V: Send + Sync + 'static> {
-    type DataWrite: AsyncWrite + Send + Sync + Unpin;
+    type Write: AsyncWrite + Unpin;
+    type WriteHolder: DerefMut<Target = Self::Write> + Send + Sync + Unpin;
     type Error: Error + Send + Sync + 'static;
     /// Write data to the log, committing it after that.  serializer
     /// is an async function that gets an AsyncWrite to write data,
@@ -103,9 +116,13 @@ pub trait LogWriter<V: Send + Sync + 'static> {
         serializer: I,
     ) -> Result<V, Self::Error>
     where
-        I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-        F: Future<Output = (io::Result<V>, AsyncWriteWrapper<Self::DataWrite>)>
-            + Send
+        I: FnOnce(AsyncWriteWrapper<Self::Write, Self::WriteHolder>) -> F + Send + Sync,
+        F: Future<
+                Output = (
+                    io::Result<V>,
+                    AsyncWriteWrapper<Self::Write, Self::WriteHolder>,
+                ),
+            > + Send
             + Sync
             + 'async_trait;
 }
@@ -240,7 +257,8 @@ impl<S: FileSyncer> SimpleFileWAL<S> {
 
 #[async_trait]
 impl<S: FileSyncer> AsyncWAL for SimpleFileWAL<S> {
-    type DataWrite = fs::File;
+    type Write = fs::File;
+    type WriteHolder = sync::OwnedMutexGuard<fs::File>;
     type CommandPos = u64;
     type Error = SimpleFileWALError;
 
@@ -249,11 +267,17 @@ impl<S: FileSyncer> AsyncWAL for SimpleFileWAL<S> {
         serializer: I,
     ) -> Result<(Self::CommandPos, T), Self::Error>
     where
-        I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-        F: Future<Output = (io::Result<T>, AsyncWriteWrapper<Self::DataWrite>)> + Send + Sync,
+        I: FnOnce(AsyncWriteWrapper<Self::Write, Self::WriteHolder>) -> F + Send + Sync,
+        F: Future<
+                Output = (
+                    io::Result<T>,
+                    AsyncWriteWrapper<Self::Write, Self::WriteHolder>,
+                ),
+            > + Send
+            + Sync,
         T: Send + 'static,
     {
-        let mut data_write = self.data_file.clone().lock_owned().await;
+        let mut data_write: Self::WriteHolder = self.data_file.clone().lock_owned().await;
         let orig_pos = data_write
             .seek(SeekFrom::Current(0))
             .await
@@ -312,7 +336,8 @@ impl<AWAL> InstantLogWriter<AWAL> {
 impl<AWAL: AsyncWAL + Send + Sync, V: Send + Sync + 'static> LogWriter<V>
     for InstantLogWriter<AWAL>
 {
-    type DataWrite = AWAL::DataWrite;
+    type Write = AWAL::Write;
+    type WriteHolder = AWAL::WriteHolder;
     type Error = AWAL::Error;
 
     async fn command<I, F>(
@@ -320,9 +345,13 @@ impl<AWAL: AsyncWAL + Send + Sync, V: Send + Sync + 'static> LogWriter<V>
         serializer: I,
     ) -> Result<V, Self::Error>
     where
-        I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-        F: Future<Output = (io::Result<V>, AsyncWriteWrapper<Self::DataWrite>)>
-            + Send
+        I: FnOnce(AsyncWriteWrapper<Self::Write, Self::WriteHolder>) -> F + Send + Sync,
+        F: Future<
+                Output = (
+                    io::Result<V>,
+                    AsyncWriteWrapper<Self::Write, Self::WriteHolder>,
+                ),
+            > + Send
             + Sync
             + 'async_trait,
     {
@@ -348,7 +377,8 @@ mod tests {
 
         #[async_trait]
         impl AsyncWAL for MemWal {
-            type DataWrite = Vec<u8>;
+            type Write = Vec<u8>;
+            type WriteHolder = sync::OwnedMutexGuard<Vec<u8>>;
             type CommandPos = usize;
             type Error = io::Error;
 
@@ -358,19 +388,21 @@ mod tests {
                 serializer: I,
             ) -> io::Result<(Self::CommandPos, T)>
             where
-                I: FnOnce(AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-                F: Future<Output = (io::Result<T>, AsyncWriteWrapper<Self::DataWrite>)>
-                    + Send
+                I: FnOnce(AsyncWriteWrapper<Self::Write, Self::WriteHolder>) -> F + Send + Sync,
+                F: Future<
+                        Output = (
+                            io::Result<T>,
+                            AsyncWriteWrapper<Self::Write, Self::WriteHolder>,
+                        ),
+                    > + Send
                     + Sync,
                 T: Send + 'static,
             {
                 let data_write = self.data.clone().lock_owned().await;
                 let orig_size = data_write.len();
                 match serializer(AsyncWriteWrapper(data_write)).await {
-                    Ok((res, AsyncWriteWrapper(data_write))) => {
-                        Ok((data_write.len() - orig_size, res))
-                    }
-                    Err(e) => Err(e),
+                    (Ok(res), aw) => (Ok((aw.0.len() - orig_size, res))),
+                    (Err(e), _) => Err(e),
                 }
             }
 
@@ -387,13 +419,13 @@ mod tests {
             }),
         };
 
-        // async fn hello<'a>(mut w: AsyncWriteWrapper<Vec<u8>>) -> io::Result<()> {
+        // async fn hello<'a>(mut w: AsyncWriteWrapper<_, _>) -> io::Result<()>
+        // {
         //     w.write_all("Hello!".as_bytes()).await.map(move |x| (x, w))
         // }
 
-        let hello = move |mut w: AsyncWriteWrapper<Vec<u8>>| async move {
-            w.write_all("Hello!".as_bytes()).await.map(move |x| (x, w))
-        };
+        let hello =
+            |mut w: AsyncWriteWrapper<_, _>| async { (w.write_all("Hello!".as_bytes()).await, w) };
 
         noop.command(hello).await?;
         let data = Arc::try_unwrap(noop.wal.into_inner().data)

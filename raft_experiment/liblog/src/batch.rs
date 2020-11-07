@@ -137,7 +137,8 @@ where
     AWAL: storage::AsyncWAL<Error = SimpleFileWALError> + Sync + Send + 'static,
     V: Sync + Send + 'static,
 {
-    type DataWrite = AWAL::DataWrite;
+    type Write = AWAL::Write;
+    type WriteHolder = AWAL::WriteHolder;
     type Error = BatchLogError;
 
     async fn command<I, F>(
@@ -145,9 +146,13 @@ where
         serializer: I,
     ) -> Result<V, Self::Error>
     where
-        I: FnOnce(storage::AsyncWriteWrapper<Self::DataWrite>) -> F + Send + Sync,
-        F: Future<Output = (io::Result<V>, storage::AsyncWriteWrapper<Self::DataWrite>)>
-            + Send
+        I: FnOnce(storage::AsyncWriteWrapper<Self::Write, Self::WriteHolder>) -> F + Send + Sync,
+        F: Future<
+                Output = (
+                    io::Result<V>,
+                    storage::AsyncWriteWrapper<Self::Write, Self::WriteHolder>,
+                ),
+            > + Send
             + Sync
             + 'async_trait,
     {
@@ -180,6 +185,8 @@ where
         // TODO: AsyncWAL has to rollback on failure.
 
         // Invariant: now buffer has some space.
+        // TODO: on error, try to flush data and flush index got so far,
+        // and fail.  Fail the current request too!
         let (pos, val) = guard
             .wal
             .command(serializer)
