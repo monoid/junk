@@ -130,6 +130,8 @@ pub trait LogWriter<V: Send + Sync + 'static> {
 #[async_trait]
 pub trait FileSyncer: Send + Sync {
     async fn sync(&self, file: &mut fs::File) -> io::Result<()>;
+
+    async fn sync_buf(&self, file: &mut io::BufWriter<fs::File>) -> io::Result<()>;
 }
 
 #[derive(Default)]
@@ -138,6 +140,10 @@ pub struct NoopFileSyncer {}
 #[async_trait]
 impl FileSyncer for NoopFileSyncer {
     async fn sync(&self, _file: &mut fs::File) -> io::Result<()> {
+        Ok(())
+    }
+
+    async fn sync_buf(&self, _file: &mut io::BufWriter<fs::File>) -> io::Result<()> {
         Ok(())
     }
 }
@@ -150,12 +156,27 @@ impl FileSyncer for SyncDataFileSyncer {
     async fn sync(&self, file: &mut fs::File) -> io::Result<()> {
         file.sync_data().await
     }
+
+    async fn sync_buf(&self, file: &mut io::BufWriter<fs::File>) -> io::Result<()> {
+        file.flush().await?;
+        file.get_mut().sync_data().await
+    }
 }
 
 async fn trim_log<S: FileSyncer>(file: &mut fs::File, len: u64, sync: &S) -> io::Result<()> {
     file.seek(SeekFrom::Start(len)).await?;
     file.set_len(len).await?;
     sync.sync(file).await
+}
+
+async fn trim_buf_log<S: FileSyncer>(
+    file: &mut io::BufWriter<fs::File>,
+    len: u64,
+    sync: &S,
+) -> io::Result<()> {
+    // It is more about cleaning buffer to be not appended to file later.
+    file.flush().await?;
+    trim_log(file.get_mut(), len, sync).await
 }
 
 #[derive(Error, Debug)]
@@ -172,8 +193,8 @@ use SimpleFileWALError::*;
 
 /// Simple log with data and index files; synced with FileSyncer.
 pub struct SimpleFileWAL<S> {
-    data_file: Arc<sync::Mutex<fs::File>>,
-    index_file: fs::File,
+    data_file: Arc<sync::Mutex<io::BufWriter<fs::File>>>,
+    index_file: io::BufWriter<fs::File>,
     sync: S,
 }
 
@@ -231,9 +252,10 @@ impl<S: FileSyncer> SimpleFileWAL<S> {
             .await
             .map_err(DataFailure)?;
 
+        // 8kb is enough for everyone.
         Ok(Self {
-            data_file: Arc::new(sync::Mutex::new(data_file)),
-            index_file,
+            data_file: Arc::new(sync::Mutex::new(io::BufWriter::new(data_file))),
+            index_file: io::BufWriter::new(index_file),
             sync,
         })
     }
@@ -256,9 +278,28 @@ impl<S: FileSyncer> SimpleFileWAL<S> {
 }
 
 #[async_trait]
+trait AsyncBufFile {
+    async fn sync_data(&mut self) -> io::Result<()>;
+    async fn seek(&mut self, from: SeekFrom) -> io::Result<u64>;
+}
+
+#[async_trait]
+impl AsyncBufFile for io::BufWriter<fs::File> {
+    async fn sync_data(&mut self) -> io::Result<()> {
+        self.flush().await?;
+        self.get_mut().sync_data().await
+    }
+
+    async fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.flush().await?;
+        self.get_mut().seek(pos).await
+    }
+}
+
+#[async_trait]
 impl<S: FileSyncer> AsyncWAL for SimpleFileWAL<S> {
-    type Write = fs::File;
-    type WriteHolder = sync::OwnedMutexGuard<fs::File>;
+    type Write = io::BufWriter<fs::File>;
+    type WriteHolder = sync::OwnedMutexGuard<io::BufWriter<fs::File>>;
     type CommandPos = u64;
     type Error = SimpleFileWALError;
 
@@ -285,7 +326,7 @@ impl<S: FileSyncer> AsyncWAL for SimpleFileWAL<S> {
         let (v, mut data_write) = match serializer(AsyncWriteWrapper(data_write)).await {
             (Ok(v), AsyncWriteWrapper(data_write)) => (Ok((v, data_write))),
             (Err(e), AsyncWriteWrapper(mut data_write)) => {
-                let rollback_res = trim_log(&mut data_write, orig_pos, &self.sync).await;
+                let rollback_res = trim_buf_log(&mut data_write, orig_pos, &self.sync).await;
                 match rollback_res {
                     Ok(()) => Err(DataFailure(e)),
                     Err(rollback_err) => Err(DataFatalFailure(e, rollback_err)),
@@ -302,7 +343,10 @@ impl<S: FileSyncer> AsyncWAL for SimpleFileWAL<S> {
     async fn indices(&mut self, pos: &[Self::CommandPos]) -> Result<(), Self::Error> {
         {
             let mut data_write = self.data_file.lock().await;
-            self.sync.sync(&mut data_write).await.map_err(DataFailure)?;
+            self.sync
+                .sync_buf(&mut data_write)
+                .await
+                .map_err(DataFailure)?;
         }
         for p in pos {
             self.index_file
@@ -311,7 +355,7 @@ impl<S: FileSyncer> AsyncWAL for SimpleFileWAL<S> {
                 .map_err(IndexFailure)?;
         }
         self.sync
-            .sync(&mut self.index_file)
+            .sync_buf(&mut self.index_file)
             .await
             .map_err(IndexFailure)?;
         Ok(())
