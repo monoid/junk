@@ -22,6 +22,93 @@ use tokio::{fs, sync};
  *
  */
 
+// TODO: rename, it is not only about buffered files.
+#[async_trait]
+pub trait AsyncBufFile: AsyncWrite {
+    async fn sync_data(&mut self) -> io::Result<()>;
+    async fn seek(&mut self, from: SeekFrom) -> io::Result<u64>;
+    async fn tell(&mut self) -> io::Result<u64>;
+}
+
+/// Position-tracking file.  Implements AsyncBufFile::tell without any
+/// syscall.
+pub struct TrackingBufFile {
+    nested: io::BufWriter<fs::File>,
+    pos: u64,
+}
+
+impl TrackingBufFile {
+    pub(crate) async fn new(mut file: fs::File) -> io::Result<Self> {
+        let pos = file.seek(SeekFrom::Current(0)).await?;
+        Ok(Self {
+            nested: io::BufWriter::new(file),
+            pos,
+        })
+    }
+}
+
+impl AsyncWrite for TrackingBufFile {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<Result<usize, io::Error>> {
+        let poll = Pin::new(&mut self.nested).poll_write(cx, buf);
+        if let std::task::Poll::Ready(Ok(len)) = &poll {
+            self.pos += *len as u64;
+        }
+        return poll;
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), io::Error>> {
+        Pin::new(&mut self.nested).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), io::Error>> {
+        Pin::new(&mut self.nested).poll_shutdown(cx)
+    }
+}
+
+#[async_trait]
+impl AsyncBufFile for TrackingBufFile {
+    async fn sync_data(&mut self) -> io::Result<()> {
+        self.nested.flush().await?;
+        self.nested.get_mut().sync_data().await
+    }
+
+    async fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+        self.nested.flush().await?;
+        let newpos = self.nested.get_mut().seek(from).await?;
+        self.pos = newpos;
+        Ok(newpos)
+    }
+
+    async fn tell(&mut self) -> io::Result<u64> {
+        Ok(self.pos)
+    }
+}
+
+#[async_trait]
+impl AsyncBufFile for fs::File {
+    async fn sync_data(&mut self) -> io::Result<()> {
+        fs::File::sync_data(self).await
+    }
+
+    async fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+        fs::File::seek(self, from).await
+    }
+
+    async fn tell(&mut self) -> io::Result<u64> {
+        fs::File::seek(self, SeekFrom::Current(0)).await
+    }
+}
+
 /// Safety wrapper to hide underlying file (e.g. to hide file methods
 /// like seek, thus stream is append-only for the user) or other type.
 /// Implements AsyncWrite.
@@ -129,9 +216,7 @@ pub trait LogWriter<V: Send + Sync + 'static> {
 
 #[async_trait]
 pub trait FileSyncer: Send + Sync {
-    async fn sync(&self, file: &mut fs::File) -> io::Result<()>;
-
-    async fn sync_buf(&self, file: &mut io::BufWriter<fs::File>) -> io::Result<()>;
+    async fn sync<W: AsyncBufFile + Send + Sync>(&self, file: &mut W) -> io::Result<()>;
 }
 
 #[derive(Default)]
@@ -139,11 +224,7 @@ pub struct NoopFileSyncer {}
 
 #[async_trait]
 impl FileSyncer for NoopFileSyncer {
-    async fn sync(&self, _file: &mut fs::File) -> io::Result<()> {
-        Ok(())
-    }
-
-    async fn sync_buf(&self, _file: &mut io::BufWriter<fs::File>) -> io::Result<()> {
+    async fn sync<W: AsyncBufFile + Send + Sync>(&self, _file: &mut W) -> io::Result<()> {
         Ok(())
     }
 }
@@ -153,13 +234,8 @@ pub struct SyncDataFileSyncer {}
 
 #[async_trait]
 impl FileSyncer for SyncDataFileSyncer {
-    async fn sync(&self, file: &mut fs::File) -> io::Result<()> {
+    async fn sync<W: AsyncBufFile + Send + Sync>(&self, file: &mut W) -> io::Result<()> {
         file.sync_data().await
-    }
-
-    async fn sync_buf(&self, file: &mut io::BufWriter<fs::File>) -> io::Result<()> {
-        file.flush().await?;
-        file.get_mut().sync_data().await
     }
 }
 
@@ -170,13 +246,15 @@ async fn trim_log<S: FileSyncer>(file: &mut fs::File, len: u64, sync: &S) -> io:
 }
 
 async fn trim_buf_log<S: FileSyncer>(
-    file: &mut io::BufWriter<fs::File>,
+    file: &mut TrackingBufFile,
     len: u64,
     sync: &S,
 ) -> io::Result<()> {
     // It is more about cleaning buffer to be not appended to file later.
     file.flush().await?;
-    trim_log(file.get_mut(), len, sync).await
+    file.seek(SeekFrom::Start(len)).await?;
+    file.nested.get_mut().set_len(len).await?;
+    sync.sync(file).await
 }
 
 #[derive(Error, Debug)]
@@ -193,8 +271,8 @@ use SimpleFileWALError::*;
 
 /// Simple log with data and index files; synced with FileSyncer.
 pub struct SimpleFileWAL<S> {
-    data_file: Arc<sync::Mutex<io::BufWriter<fs::File>>>,
-    index_file: io::BufWriter<fs::File>,
+    data_file: Arc<sync::Mutex<TrackingBufFile>>,
+    index_file: TrackingBufFile,
     sync: S,
 }
 
@@ -254,8 +332,12 @@ impl<S: FileSyncer> SimpleFileWAL<S> {
 
         // 8kb is enough for everyone.
         Ok(Self {
-            data_file: Arc::new(sync::Mutex::new(io::BufWriter::new(data_file))),
-            index_file: io::BufWriter::new(index_file),
+            data_file: Arc::new(sync::Mutex::new(
+                TrackingBufFile::new(data_file).await.map_err(DataFailure)?,
+            )),
+            index_file: TrackingBufFile::new(index_file)
+                .await
+                .map_err(IndexFailure)?,
             sync,
         })
     }
@@ -278,28 +360,9 @@ impl<S: FileSyncer> SimpleFileWAL<S> {
 }
 
 #[async_trait]
-trait AsyncBufFile {
-    async fn sync_data(&mut self) -> io::Result<()>;
-    async fn seek(&mut self, from: SeekFrom) -> io::Result<u64>;
-}
-
-#[async_trait]
-impl AsyncBufFile for io::BufWriter<fs::File> {
-    async fn sync_data(&mut self) -> io::Result<()> {
-        self.flush().await?;
-        self.get_mut().sync_data().await
-    }
-
-    async fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        self.flush().await?;
-        self.get_mut().seek(pos).await
-    }
-}
-
-#[async_trait]
 impl<S: FileSyncer> AsyncWAL for SimpleFileWAL<S> {
-    type Write = io::BufWriter<fs::File>;
-    type WriteHolder = sync::OwnedMutexGuard<io::BufWriter<fs::File>>;
+    type Write = TrackingBufFile;
+    type WriteHolder = sync::OwnedMutexGuard<TrackingBufFile>;
     type CommandPos = u64;
     type Error = SimpleFileWALError;
 
@@ -319,10 +382,7 @@ impl<S: FileSyncer> AsyncWAL for SimpleFileWAL<S> {
         T: Send + 'static,
     {
         let mut data_write: Self::WriteHolder = self.data_file.clone().lock_owned().await;
-        let orig_pos = data_write
-            .seek(SeekFrom::Current(0))
-            .await
-            .map_err(DataFailure)?;
+        let orig_pos = data_write.tell().await.map_err(DataFailure)?;
         let (v, mut data_write) = match serializer(AsyncWriteWrapper(data_write)).await {
             (Ok(v), AsyncWriteWrapper(data_write)) => (Ok((v, data_write))),
             (Err(e), AsyncWriteWrapper(mut data_write)) => {
@@ -333,10 +393,7 @@ impl<S: FileSyncer> AsyncWAL for SimpleFileWAL<S> {
                 }
             }
         }?;
-        let new_pos = data_write
-            .seek(SeekFrom::Current(0))
-            .await
-            .map_err(DataFailure)?;
+        let new_pos = data_write.tell().await.map_err(DataFailure)?;
         Ok((new_pos - orig_pos, v))
     }
 
@@ -344,7 +401,7 @@ impl<S: FileSyncer> AsyncWAL for SimpleFileWAL<S> {
         {
             let mut data_write = self.data_file.lock().await;
             self.sync
-                .sync_buf(&mut data_write)
+                .sync(data_write.deref_mut())
                 .await
                 .map_err(DataFailure)?;
         }
@@ -355,7 +412,7 @@ impl<S: FileSyncer> AsyncWAL for SimpleFileWAL<S> {
                 .map_err(IndexFailure)?;
         }
         self.sync
-            .sync_buf(&mut self.index_file)
+            .sync(&mut self.index_file)
             .await
             .map_err(IndexFailure)?;
         Ok(())
@@ -476,6 +533,43 @@ mod tests {
             .unwrap()
             .into_inner();
         assert!(String::from_utf8(data) == Ok("Hello!".to_string()));
+        Ok(())
+    }
+
+    #[tokio::test(threaded_scheduler)]
+    async fn test_basic_tracking_writer() -> io::Result<()> {
+        let tmpdir = tempfile::tempdir()?;
+        std::env::set_current_dir(&tmpdir)?;
+        let file = fs::File::create("myfile").await?;
+        let mut track_file = TrackingBufFile::new(file).await?;
+
+        let data1 = "test\n".as_bytes();
+        track_file.write_all(data1).await?;
+        assert_eq!(track_file.tell().await?, data1.len() as u64);
+
+        track_file.seek(SeekFrom::Start(2)).await?;
+        assert_eq!(track_file.tell().await?, 2);
+
+        track_file.seek(SeekFrom::End(0)).await?;
+        assert_eq!(track_file.tell().await?, data1.len() as u64);
+
+        let mut data2 = Vec::new();
+        data2.resize(16 * 2048, 0xFFu8);
+        track_file.write_all(&data2[..]).await?;
+        assert_eq!(track_file.tell().await?, (data1.len() + data2.len()) as u64);
+
+        track_file.flush();
+        drop(track_file);
+
+        let mut read = fs::File::open("myfile").await?;
+        let mut first_pack = Vec::new();
+        first_pack.resize(data1.len(), 0);
+        read.read_exact(&mut first_pack[..]).await?;
+        assert_eq!(data1, &first_pack[..]);
+
+        let mut second_pack = Vec::new();
+        read.read_to_end(&mut second_pack).await?;
+        assert_eq!(data2, &second_pack[..]);
         Ok(())
     }
 }
