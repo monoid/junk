@@ -332,12 +332,12 @@ impl<S: FileSyncer> SimpleFileWAL<S> {
 
         // 8kb is enough for everyone.
         Ok(Self {
-            data_file: Arc::new(sync::Mutex::new(
-                TrackingBufFile::new(data_file).await.map_err(DataFailure)?,
-            )),
             index_file: TrackingBufFile::new(index_file)
                 .await
                 .map_err(IndexFailure)?,
+            data_file: Arc::new(sync::Mutex::new(
+                TrackingBufFile::new(data_file).await.map_err(DataFailure)?,
+            )),
             sync,
         })
     }
