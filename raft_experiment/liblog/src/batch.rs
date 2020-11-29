@@ -209,8 +209,8 @@ where
         match receiver.await {
             Ok(r) => r,
             // Please note that this is not a fatal error, as it relates
-            // single request only.
-            // tokio::sync::oneshot::error::RecvError
+            // to single request only.  But it worth knowing it anyway.
+            // e: tokio::sync::oneshot::error::RecvError
             Err(e) => Err(BatchLogError::CantHappen {
                 file: file!(),
                 line: line!(),

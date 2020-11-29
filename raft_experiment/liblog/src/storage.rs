@@ -57,7 +57,7 @@ impl AsyncWrite for TrackingBufFile {
         if let std::task::Poll::Ready(Ok(len)) = &poll {
             self.pos += *len as u64;
         }
-        return poll;
+        poll
     }
 
     fn poll_flush(
