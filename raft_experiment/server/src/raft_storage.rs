@@ -1,10 +1,15 @@
-use crate::model;
-use async_raft;
-use async_trait::async_trait;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
-use tokio::sync::RwLock;
 
+use async_raft;
+use async_trait::async_trait;
+use tokio::sync::RwLock;
+use serde::{Deserialize, Serialize};
+use crate::model;
+use crate::raft_network;
+
+#[derive(Deserialize, Serialize)]
 pub struct FileStoreSnapshot {
     pub index: u64,
     pub term: u64,
@@ -12,21 +17,27 @@ pub struct FileStoreSnapshot {
 
 #[derive(Clone, Debug)]
 pub struct FileStateMachine<T> {
-    pub last_applied_log: u64,
+    pub last_applied_log_index: u64,
+    pub last_applied_log_term: u64,
+    pub membership_config: HashMap<async_raft::NodeId, raft_network::Node>,
     pub nested: T,
 }
 
 pub struct FileStorage<T> {
+    node_id: async_raft::NodeId,
     state: RwLock<FileStateMachine<T>>,
     storage_dir: PathBuf,
     counter: AtomicUsize,
 }
 
 impl<T> FileStorage<T> {
-    pub fn new(storage_dir: PathBuf, initial: T) -> Self {
+    pub fn new(storage_dir: PathBuf, node_id: async_raft::NodeId, initial: T) -> Self {
         Self {
+            node_id,
             state: RwLock::new(FileStateMachine {
-                last_applied_log: 0,
+                last_applied_log_index: 0,
+                last_applied_log_term: 0,
+                membership_config: Default::default(),
                 nested: initial,
             }),
             storage_dir,
@@ -44,7 +55,7 @@ impl async_raft::RaftStorage<model::Change, model::ClientResponse> for FileStora
     }
 
     async fn get_initial_state(&self) -> anyhow::Result<async_raft::storage::InitialState> {
-        todo!()
+        Ok(async_raft::storage::InitialState::new_initial(self.node_id))
     }
 
     async fn save_hard_state(&self, hs: &async_raft::storage::HardState) -> anyhow::Result<()> {
@@ -91,7 +102,7 @@ impl async_raft::RaftStorage<model::Change, model::ClientResponse> for FileStora
     ) -> anyhow::Result<()> {
         let mut state = self.state.write().await;
         for (index, command) in entries {
-            state.last_applied_log = **index;
+            state.last_applied_log_index = **index;
             state.nested.apply(command).await;
         }
         Ok(())

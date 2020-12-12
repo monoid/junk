@@ -63,6 +63,12 @@ pub enum Change {
 impl async_raft::AppData for Change {}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ClientResponse(Result<Option<String>, ()>);
+pub enum Either<A, B> {
+    Left(A),
+    Right(B),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ClientResponse(Result<Either<Value, String>, ()>);
 
 impl async_raft::AppDataResponse for ClientResponse {}

@@ -2,6 +2,8 @@ mod config;
 mod model;
 mod raft_network;
 mod raft_storage;
+use std::sync::Arc;
+
 use clap;
 use tokio;
 
@@ -39,5 +41,16 @@ pub async fn main() {
     for n in &conf.nodes {
         eprintln!("{}", n);
     }
-    eprintln!("Raft config: {:?}", conf.raft_config.validate());
+    let config = conf.raft_config.validate();
+    eprintln!("Raft config: {:?}", config);
+
+    let node_id = node_self.parse().unwrap();
+    let storage = memstore::MemStore::new(node_id);
+    let raft = async_raft::Raft::new(
+        node_id,
+        Arc::new(config.expect("Expected valid config")),
+        Arc::new(raft_network::RaftRouter::default()),
+        Arc::new(storage));
+
+    raft_network::network_server_endpoint(Arc::new(raft), conf.http_port).await
 }
