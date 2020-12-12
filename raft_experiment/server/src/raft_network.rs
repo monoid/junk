@@ -36,7 +36,7 @@ impl RaftRouter {
         req: Req,
     ) -> Result<Resp> {
         eprintln!("{}/{}: {:?}", method, target, req);
-        let mut url = self.nodes.get(&(target as usize)).unwrap().clone();
+        let mut url = self.resolve(target).unwrap().clone();
         url += "/";
         url += method;
         // TODO: use tokio-serde and stream instead of memory buffer
@@ -59,6 +59,10 @@ impl RaftRouter {
             nodes: nodes.iter().cloned().enumerate().collect::<_>(),
             client: reqwest::Client::new(),
         }
+    }
+
+    pub fn resolve(&self, node_id: u64) -> Option<&String> {
+        self.nodes.get(&(node_id as usize))
     }
 }
 
@@ -119,6 +123,7 @@ fn err_wrapper<R: warp::reply::Reply + 'static>(
 
 pub(crate) async fn network_server_endpoint<S>(
     raft: Arc<Raft<memstore::ClientRequest, memstore::ClientResponse, RaftRouter, S>>,
+    network: Arc<RaftRouter>,
     port: u16,
 ) where
     S: async_raft::RaftStorage<memstore::ClientRequest, memstore::ClientResponse>,
@@ -193,6 +198,7 @@ pub(crate) async fn network_server_endpoint<S>(
         status: String,
         serial: u64,
         raft: Arc<Raft<memstore::ClientRequest, memstore::ClientResponse, RaftRouter, S>>,
+        network: Arc<RaftRouter>,
     ) -> anyhow::Result<Response>
     where
         S: async_raft::RaftStorage<memstore::ClientRequest, memstore::ClientResponse>,
@@ -205,8 +211,14 @@ pub(crate) async fn network_server_endpoint<S>(
                     status,
                 },
             ))
-            .await?;
-        Ok(Response::new(format!("{:?}", resp).into()))
+            .await;
+        match resp {
+            Ok(res) => Ok(Response::new(format!("{:?}", res).into())),
+            Err(async_raft::error::ClientWriteError::ForwardToLeader(_, to)) => Ok(Response::new(
+                format!("Redirect {:?}", to.map(|x| network.resolve(x)).flatten()).into(),
+            )),
+            Err(e) => Ok(Response::new(format!("{}", e.to_string()).into())),
+        }
     }
 
     let client_update = warp::path("update")
@@ -214,9 +226,10 @@ pub(crate) async fn network_server_endpoint<S>(
         .and(warp::path::param())
         .and(warp::path::param())
         .and(warp::any().map(get_raft()))
+        .and(warp::any().map(move || network.clone()))
         .and_then(
-            |client: String, status: String, serial: u64, raft| async move {
-                err_wrapper(client_update_body(client, status, serial, raft).await)
+            |client: String, status: String, serial: u64, network, raft| async move {
+                err_wrapper(client_update_body(client, status, serial, network, raft).await)
             },
         );
     let all = vote.or(install_snapshot).or(append).or(client_update);

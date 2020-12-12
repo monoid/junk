@@ -47,10 +47,13 @@ pub async fn main() {
 
     let node_id = node_self.parse().unwrap();
     let storage = memstore::MemStore::new(node_id);
+    let network = Arc::new(raft_network::RaftRouter::with_nodes(&conf.nodes));
+    let network1 = network.clone();
+
     let raft = async_raft::Raft::new(
         node_id,
         Arc::new(config.expect("Expected valid config")),
-        Arc::new(raft_network::RaftRouter::with_nodes(&conf.nodes)),
+        network,
         Arc::new(storage),
     );
 
@@ -58,7 +61,7 @@ pub async fn main() {
     let raft1 = raft.clone();
 
     join!(
-        raft_network::network_server_endpoint(raft1, conf.http_port),
+        raft_network::network_server_endpoint(raft1, network1, conf.http_port),
         raft.initialize((0u64..conf.nodes.len() as u64).collect::<_>())
     )
     .1
