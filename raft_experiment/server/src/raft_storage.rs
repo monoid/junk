@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
 
-use async_raft;
-use async_trait::async_trait;
-use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
 use crate::model;
 use crate::raft_network;
+use async_raft;
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 
 #[derive(Deserialize, Serialize)]
 pub struct FileStoreSnapshot {

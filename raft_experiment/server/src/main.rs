@@ -5,8 +5,8 @@ mod raft_storage;
 use std::sync::Arc;
 
 use clap;
-use tokio::join;
 use tokio;
+use tokio::join;
 
 #[tokio::main]
 pub async fn main() {
@@ -51,7 +51,8 @@ pub async fn main() {
         node_id,
         Arc::new(config.expect("Expected valid config")),
         Arc::new(raft_network::RaftRouter::with_nodes(&conf.nodes)),
-        Arc::new(storage));
+        Arc::new(storage),
+    );
 
     let raft = Arc::new(raft);
     let raft1 = raft.clone();
@@ -59,5 +60,7 @@ pub async fn main() {
     join!(
         raft_network::network_server_endpoint(raft1, conf.http_port),
         raft.initialize((0u64..conf.nodes.len() as u64).collect::<_>())
-    ).1.expect("Result");
+    )
+    .1
+    .expect("Result");
 }

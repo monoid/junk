@@ -9,21 +9,19 @@ use async_raft::{
     },
 };
 use async_trait::async_trait;
-use serde::{de::DeserializeOwned, Serialize};
 use reqwest;
-use warp::hyper::Body;
-use warp::{Filter, reply::Response};
-use std::fmt::Debug;
+use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::convert::Infallible;
+use std::fmt::Debug;
+use std::sync::Arc;
 use warp::hyper::body::Bytes;
-
+use warp::hyper::Body;
+use warp::{reply::Response, Filter};
 
 const APPEND_ENTRIES_PATH: &'static str = "append_entries";
 const INSTALL_SNAPSHOT_PATH: &'static str = "install_snapshot";
 const VOTE_PATH: &'static str = "vote";
-
 
 pub struct RaftRouter {
     nodes: HashMap<usize, String>,
@@ -31,14 +29,20 @@ pub struct RaftRouter {
 }
 
 impl RaftRouter {
-    async fn send_req<Req: Serialize + Debug, Resp: DeserializeOwned>(&self, target: u64, method: &'static str, req: Req) -> Result<Resp> {
+    async fn send_req<Req: Serialize + Debug, Resp: DeserializeOwned>(
+        &self,
+        target: u64,
+        method: &'static str,
+        req: Req,
+    ) -> Result<Resp> {
         eprintln!("{}/{}: {:?}", method, target, req);
         let mut url = self.nodes.get(&(target as usize)).unwrap().clone();
         url += "/";
         url += method;
         // TODO: use tokio-serde and stream instead of memory buffer
         let mem = bincode::serialize(&req)?;
-        let http_data = &self.client
+        let http_data = &self
+            .client
             .post(&url)
             .body(mem)
             .send()
@@ -70,7 +74,7 @@ impl Default for RaftRouter {
 
 #[async_trait]
 impl<A: async_raft::AppData> RaftNetwork<A> for RaftRouter {
-    /// Append entries to target Raft node. 
+    /// Append entries to target Raft node.
     async fn append_entries(
         &self,
         target: u64,
@@ -97,7 +101,9 @@ impl<A: async_raft::AppData> RaftNetwork<A> for RaftRouter {
     }
 }
 
-fn err_wrapper<R: warp::reply::Reply + 'static>(r: Result<R, anyhow::Error>) -> Result<Box<dyn warp::reply::Reply>, Infallible> {
+fn err_wrapper<R: warp::reply::Reply + 'static>(
+    r: Result<R, anyhow::Error>,
+) -> Result<Box<dyn warp::reply::Reply>, Infallible> {
     Ok(match r {
         Ok(reply) => Box::new(reply),
         Err(e) => {
@@ -105,8 +111,8 @@ fn err_wrapper<R: warp::reply::Reply + 'static>(r: Result<R, anyhow::Error>) -> 
             eprintln!("Reply error: {}", msg);
             Box::new(warp::reply::with_status(
                 msg,
-                warp::http::StatusCode::INTERNAL_SERVER_ERROR)
-            )
+                warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+            ))
         }
     })
 }
@@ -114,57 +120,61 @@ fn err_wrapper<R: warp::reply::Reply + 'static>(r: Result<R, anyhow::Error>) -> 
 pub(crate) async fn network_server_endpoint<S>(
     raft: Arc<Raft<memstore::ClientRequest, memstore::ClientResponse, RaftRouter, S>>,
     port: u16,
-)
-where S: async_raft::RaftStorage<memstore::ClientRequest, memstore::ClientResponse>
+) where
+    S: async_raft::RaftStorage<memstore::ClientRequest, memstore::ClientResponse>,
 {
     let get_raft = move || {
         let copy = raft.clone();
         move || copy.clone()
     };
 
-    async fn append_entries_body<A, R, S>(body: Bytes, raft: Arc<Raft<A, R, RaftRouter, S>>) -> anyhow::Result<Response>
-    where A: async_raft::AppData,
-          R: async_raft::AppDataResponse,
-          S: async_raft::RaftStorage<A, R>
+    async fn append_entries_body<A, R, S>(
+        body: Bytes,
+        raft: Arc<Raft<A, R, RaftRouter, S>>,
+    ) -> anyhow::Result<Response>
+    where
+        A: async_raft::AppData,
+        R: async_raft::AppDataResponse,
+        S: async_raft::RaftStorage<A, R>,
     {
         let data = bincode::deserialize(&body)?;
         let out = bincode::serialize(&raft.append_entries(data).await?)?;
         Ok(Response::new(out.into()))
     }
 
-    let append = warp::path(APPEND_ENTRIES_PATH).and(
-        warp::filters::method::post()
-    ).and(
-        warp::body::bytes()
-    ).and(
-        warp::any().map(get_raft())
-    ).and_then(|body, raft| async {
-        err_wrapper(append_entries_body(body, raft).await)
-    });
+    let append = warp::path(APPEND_ENTRIES_PATH)
+        .and(warp::filters::method::post())
+        .and(warp::body::bytes())
+        .and(warp::any().map(get_raft()))
+        .and_then(|body, raft| async { err_wrapper(append_entries_body(body, raft).await) });
 
-    async fn install_snapshot_body<A, R, S>(body: Bytes, raft: Arc<Raft<A, R, RaftRouter, S>>) -> anyhow::Result<Response>
-    where A: async_raft::AppData,
-          R: async_raft::AppDataResponse,
-          S: async_raft::RaftStorage<A, R>
+    async fn install_snapshot_body<A, R, S>(
+        body: Bytes,
+        raft: Arc<Raft<A, R, RaftRouter, S>>,
+    ) -> anyhow::Result<Response>
+    where
+        A: async_raft::AppData,
+        R: async_raft::AppDataResponse,
+        S: async_raft::RaftStorage<A, R>,
     {
         let data = bincode::deserialize(&body)?;
         let out = bincode::serialize(&raft.install_snapshot(data).await?)?;
         Ok(Response::new(out.into()))
     }
-    let install_snapshot = warp::path(INSTALL_SNAPSHOT_PATH).and(
-        warp::filters::method::post()
-    ).and(
-        warp::body::bytes()
-    ).and(
-        warp::any().map(get_raft())
-    ).and_then(|body, raft| async {
-        err_wrapper(install_snapshot_body(body, raft).await)
-    });
+    let install_snapshot = warp::path(INSTALL_SNAPSHOT_PATH)
+        .and(warp::filters::method::post())
+        .and(warp::body::bytes())
+        .and(warp::any().map(get_raft()))
+        .and_then(|body, raft| async { err_wrapper(install_snapshot_body(body, raft).await) });
 
-    async fn vote_body<A, R, S>(body: Bytes, raft: Arc<Raft<A, R, RaftRouter, S>>) -> anyhow::Result<Response>
-    where A: async_raft::AppData,
-          R: async_raft::AppDataResponse,
-          S: async_raft::RaftStorage<A, R>
+    async fn vote_body<A, R, S>(
+        body: Bytes,
+        raft: Arc<Raft<A, R, RaftRouter, S>>,
+    ) -> anyhow::Result<Response>
+    where
+        A: async_raft::AppData,
+        R: async_raft::AppDataResponse,
+        S: async_raft::RaftStorage<A, R>,
     {
         let data = bincode::deserialize(&body)?;
         eprintln!("vote resp: {:?}", data);
@@ -172,36 +182,43 @@ where S: async_raft::RaftStorage<memstore::ClientRequest, memstore::ClientRespon
         Ok(Response::new(Into::<Body>::into(out)))
     }
 
-    let vote = warp::path(VOTE_PATH).and(
-        warp::filters::method::post()
-    ).and(
-        warp::body::bytes()
-    ).and(
-        warp::any().map(get_raft())
-    ).and_then(|body, raft| async {
-        err_wrapper(vote_body(body, raft).await)
-    });
+    let vote = warp::path(VOTE_PATH)
+        .and(warp::filters::method::post())
+        .and(warp::body::bytes())
+        .and(warp::any().map(get_raft()))
+        .and_then(|body, raft| async { err_wrapper(vote_body(body, raft).await) });
 
-    async fn client_update_body<S>(client: String, status: String, serial: u64, raft: Arc<Raft<memstore::ClientRequest, memstore::ClientResponse, RaftRouter, S>>) -> anyhow::Result<Response>
-    where S: async_raft::RaftStorage<memstore::ClientRequest, memstore::ClientResponse> {
-        let resp = raft.client_write(async_raft::raft::ClientWriteRequest::new(
-            memstore::ClientRequest {
-                client, serial, status,
-            })).await?;
+    async fn client_update_body<S>(
+        client: String,
+        status: String,
+        serial: u64,
+        raft: Arc<Raft<memstore::ClientRequest, memstore::ClientResponse, RaftRouter, S>>,
+    ) -> anyhow::Result<Response>
+    where
+        S: async_raft::RaftStorage<memstore::ClientRequest, memstore::ClientResponse>,
+    {
+        let resp = raft
+            .client_write(async_raft::raft::ClientWriteRequest::new(
+                memstore::ClientRequest {
+                    client,
+                    serial,
+                    status,
+                },
+            ))
+            .await?;
         Ok(Response::new(format!("{:?}", resp).into()))
     }
 
-    let client_update = warp::path("update").and(
-        warp::path::param()
-    ).and(
-        warp::path::param()
-    ).and(
-        warp::path::param()
-    ).and(
-        warp::any().map(get_raft())
-    ).and_then(|client: String, status: String, serial: u64, raft| async move {
-        err_wrapper(client_update_body(client, status, serial, raft).await)
-    });
+    let client_update = warp::path("update")
+        .and(warp::path::param())
+        .and(warp::path::param())
+        .and(warp::path::param())
+        .and(warp::any().map(get_raft()))
+        .and_then(
+            |client: String, status: String, serial: u64, raft| async move {
+                err_wrapper(client_update_body(client, status, serial, raft).await)
+            },
+        );
     let all = vote.or(install_snapshot).or(append).or(client_update);
 
     warp::serve(all).run(([127, 0, 0, 1], port)).await
