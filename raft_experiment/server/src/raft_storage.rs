@@ -19,7 +19,7 @@ pub struct FileStoreSnapshot {
 pub struct FileStateMachine<T> {
     pub last_applied_log_index: u64,
     pub last_applied_log_term: u64,
-    pub membership_config: HashMap<async_raft::NodeId, raft_network::Node>,
+    pub membership_config: HashMap<async_raft::NodeId, String>,
     pub nested: T,
 }
 

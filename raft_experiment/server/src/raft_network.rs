@@ -13,6 +13,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use reqwest;
 use warp::hyper::Body;
 use warp::{Filter, reply::Response};
+use std::fmt::Debug;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::convert::Infallible;
@@ -24,19 +25,15 @@ const INSTALL_SNAPSHOT_PATH: &'static str = "install_snapshot";
 const VOTE_PATH: &'static str = "vote";
 
 
-#[derive(Clone, Debug)]
-pub struct Node {
-    url: String
-}
-
 pub struct RaftRouter {
-    nodes: HashMap<u64, Node>,
+    nodes: HashMap<usize, String>,
     client: reqwest::Client,
 }
 
 impl RaftRouter {
-    async fn send_req<Req: Serialize, Resp: DeserializeOwned>(&self, target: u64, method: &'static str, req: Req) -> Result<Resp> {
-        let mut url = self.nodes.get(&target).unwrap().url.clone();
+    async fn send_req<Req: Serialize + Debug, Resp: DeserializeOwned>(&self, target: u64, method: &'static str, req: Req) -> Result<Resp> {
+        eprintln!("{}/{}: {:?}", method, target, req);
+        let mut url = self.nodes.get(&(target as usize)).unwrap().clone();
         url += "/";
         url += method;
         // TODO: use tokio-serde and stream instead of memory buffer
@@ -52,11 +49,21 @@ impl RaftRouter {
     }
 }
 
+impl RaftRouter {
+    pub fn with_nodes(nodes: &Vec<String>) -> Self {
+        Self {
+            nodes: nodes.iter().cloned().enumerate().collect::<_>(),
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
 impl Default for RaftRouter {
     fn default() -> Self {
-        RaftRouter {
+        eprintln!("Raft network");
+        Self {
+            nodes: Default::default(),
             client: reqwest::Client::new(),
-            ..Default::default()
         }
     }
 }
@@ -83,7 +90,10 @@ impl<A: async_raft::AppData> RaftNetwork<A> for RaftRouter {
 
     /// Send a RequestVote RPC to the target Raft node (§5).
     async fn vote(&self, target: u64, rpc: VoteRequest) -> Result<VoteResponse> {
-        self.send_req(target, VOTE_PATH, rpc).await
+        self.send_req(target, VOTE_PATH, rpc).await.map_err(|e| {
+            eprintln!("Send req error: {:?}", e);
+            e
+        })
     }
 }
 
@@ -91,21 +101,21 @@ fn err_wrapper<R: warp::reply::Reply + 'static>(r: Result<R, anyhow::Error>) -> 
     Ok(match r {
         Ok(reply) => Box::new(reply),
         Err(e) => {
+            let msg = e.to_string();
+            eprintln!("Reply error: {}", msg);
             Box::new(warp::reply::with_status(
-                e.to_string(),
+                msg,
                 warp::http::StatusCode::INTERNAL_SERVER_ERROR)
             )
         }
     })
 }
 
-pub(crate) async fn network_server_endpoint<A, R, S>(
-    raft: Arc<Raft<A, R, RaftRouter, S>>,
+pub(crate) async fn network_server_endpoint<S>(
+    raft: Arc<Raft<memstore::ClientRequest, memstore::ClientResponse, RaftRouter, S>>,
     port: u16,
 )
-where A: async_raft::AppData,
-      R: async_raft::AppDataResponse,
-      S: async_raft::RaftStorage<A, R>
+where S: async_raft::RaftStorage<memstore::ClientRequest, memstore::ClientResponse>
 {
     let get_raft = move || {
         let copy = raft.clone();
@@ -157,6 +167,7 @@ where A: async_raft::AppData,
           S: async_raft::RaftStorage<A, R>
     {
         let data = bincode::deserialize(&body)?;
+        eprintln!("vote resp: {:?}", data);
         let out = bincode::serialize(&raft.vote(data).await?)?;
         Ok(Response::new(Into::<Body>::into(out)))
     }
@@ -171,7 +182,27 @@ where A: async_raft::AppData,
         err_wrapper(vote_body(body, raft).await)
     });
 
-    let all = vote.or(install_snapshot).or(append);
+    async fn client_update_body<S>(client: String, status: String, serial: u64, raft: Arc<Raft<memstore::ClientRequest, memstore::ClientResponse, RaftRouter, S>>) -> anyhow::Result<Response>
+    where S: async_raft::RaftStorage<memstore::ClientRequest, memstore::ClientResponse> {
+        let resp = raft.client_write(async_raft::raft::ClientWriteRequest::new(
+            memstore::ClientRequest {
+                client, serial, status,
+            })).await?;
+        Ok(Response::new(format!("{:?}", resp).into()))
+    }
+
+    let client_update = warp::path("update").and(
+        warp::path::param()
+    ).and(
+        warp::path::param()
+    ).and(
+        warp::path::param()
+    ).and(
+        warp::any().map(get_raft())
+    ).and_then(|client: String, status: String, serial: u64, raft| async move {
+        err_wrapper(client_update_body(client, status, serial, raft).await)
+    });
+    let all = vote.or(install_snapshot).or(append).or(client_update);
 
     warp::serve(all).run(([127, 0, 0, 1], port)).await
 }

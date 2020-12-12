@@ -12,7 +12,7 @@ pub struct Config {
     /// RAFT port for cluster intercommunication
     pub raft_port: u16,
     /// Initial list of nodes
-    pub nodes: HashSet<String>,
+    pub nodes: Vec<String>,
 
     pub raft_config: async_raft::ConfigBuilder,
 }
