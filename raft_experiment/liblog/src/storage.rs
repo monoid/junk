@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use thiserror::Error;
 use tokio::io::{self, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::{fs, sync};
+use pin_project_lite::pin_project;
 
 /**
  * Raft request (i.e. command) Log.
@@ -30,12 +31,17 @@ pub trait AsyncBufFile: AsyncWrite {
     async fn tell(&mut self) -> io::Result<u64>;
 }
 
-/// Position-tracking file.  Implements AsyncBufFile::tell without any
-/// syscall.
-pub struct TrackingBufFile {
-    nested: io::BufWriter<fs::File>,
-    pos: u64,
+pin_project! {
+    /// Position-tracking file.  Implements AsyncBufFile::tell without any
+    /// syscall.
+    pub struct TrackingBufFile {
+        #[pin]
+        nested: io::BufWriter<fs::File>,
+        pos: u64,
+    }
 }
+
+
 
 impl TrackingBufFile {
     pub(crate) async fn new(mut file: fs::File) -> io::Result<Self> {
@@ -49,29 +55,30 @@ impl TrackingBufFile {
 
 impl AsyncWrite for TrackingBufFile {
     fn poll_write(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<Result<usize, io::Error>> {
-        let poll = Pin::new(&mut self.nested).poll_write(cx, buf);
+        let this = self.project();
+        let poll = this.nested.poll_write(cx, buf);
         if let std::task::Poll::Ready(Ok(len)) = &poll {
-            self.pos += *len as u64;
+            *this.pos += *len as u64;
         }
         poll
     }
 
     fn poll_flush(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.nested).poll_flush(cx)
+        self.project().nested.poll_flush(cx)
     }
 
     fn poll_shutdown(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.nested).poll_shutdown(cx)
+        self.project().nested.poll_shutdown(cx)
     }
 }
 
