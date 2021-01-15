@@ -5,7 +5,7 @@ BIN=main
 all: $(BIN)
 
 main: main.c libexperiment 
-	$(CC) -o $@ $< -L./target/release/ -lexperiment
+	$(CC) -Wall -o $@ $< -L./target/release/ -lexperiment
 
 libexperiment:
 	cargo build --release
