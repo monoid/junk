@@ -38,14 +38,13 @@ fn query(url: *const c_char) -> *mut c_char {
                 }
                 Some(data)
             });
-            match data.and_then(|d| CString::new(d).ok()) {
-                Some(data) => {
-                    data.into_raw()
-                }
-                None => {
-                    std::ptr::null_mut()
-                }
-            }
+            data.and_then(
+                |d| CString::new(d).ok()
+            ).map(
+                CString::into_raw
+            ).unwrap_or(
+                std::ptr::null_mut()
+            )
         },
         Err(_) => {
             std::ptr::null_mut()
