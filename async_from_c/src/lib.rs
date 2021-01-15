@@ -54,9 +54,11 @@ fn query(url: *const c_char) -> *mut c_char {
 
 #[no_mangle]
 extern "C" fn free_result(data: *mut c_char) {
-    unsafe {
-        CString::from_raw(data)
-    };
+    if !data.is_null() {
+        unsafe {
+            CString::from_raw(data)
+        };
+    }
 }
 
 #[cfg(test)]
