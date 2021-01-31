@@ -1,5 +1,8 @@
-use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
+use std::{
+    ffi::{CStr, CString},
+    time::Duration,
+};
 
 use tokio_stream::StreamExt;
 
@@ -14,14 +17,28 @@ thread_local! {
         .unwrap();
 }
 
+// Helper func that is tuned differently than reqwest::get.
+async fn get(url: &str) -> reqwest::Result<reqwest::Response> {
+    reqwest::Client::builder().
+        // Disable the connection pool because it doesn't work well with
+        // fork.
+        pool_idle_timeout(Some(Duration::from_secs(0)))
+        // Enable Trust-DNS that doens't need the blocking pool.
+        .trust_dns(true)
+        .build()?
+        .get(url)
+        .send()
+        .await
+}
+
 #[no_mangle]
 extern "C" fn query(url: *const c_char) -> *mut c_char {
-    match unsafe { CStr::from_ptr(url).to_str() } {
+    match unsafe { CStr::from_ptr(url) }.to_str() {
         Ok(url) => {
             let data = RUNTIME.with(|r| {
-                r.block_on(async {
+                let data = r.block_on(async {
                     let mut data = vec![0u8; 0];
-                    match reqwest::get(url).await {
+                    match get(url).await {
                         Ok(res) => {
                             let mut stream = res.bytes_stream();
                             while let Some(chunk) = stream.next().await {
@@ -40,7 +57,8 @@ extern "C" fn query(url: *const c_char) -> *mut c_char {
                         }
                     }
                     Some(data)
-                })
+                });
+                data
             });
             data.and_then(|d| CString::new(d).ok())
                 .map(CString::into_raw)

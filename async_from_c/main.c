@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 extern char* query(const char* url);
 extern void free_result(char* res);
@@ -12,6 +13,8 @@ int main() {
     printf("no data\n");
   }
   free_result(r);
+
+  fork();  // Test forking
 
   r = query("https://www.google.com");
   if (r) {
