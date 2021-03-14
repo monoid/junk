@@ -1,8 +1,8 @@
-use itertools::Itertools as _;
-use std::{cmp::Reverse, collections::BinaryHeap, env};
-use std::fs::File;
-use std::io::{Read as _, BufReader};
 use fasthash::{city::Hash32, FastHash};
+use itertools::Itertools as _;
+use std::fs::File;
+use std::io::{BufReader, Read as _};
+use std::{cmp::Reverse, collections::BinaryHeap, env};
 
 struct State {
     max_size: usize,
@@ -29,11 +29,18 @@ impl State {
     }
 
     fn push(&mut self, val: u32) {
-        self.heap_min.push(val);
-        self.heap_max.push(Reverse(val));
-        if self.heap_min.len() > self.max_size {
-            self.heap_min.pop();
-            self.heap_max.pop();
+        if self.heap_min.iter().find(|v| *v == &val).is_some() {
+            self.heap_min.push(val);
+            if self.heap_min.len() > self.max_size {
+                self.heap_min.pop();
+            }
+        }
+
+        if self.heap_max.iter().find(|v| v.0 == val).is_some() {
+            self.heap_max.push(Reverse(val));
+            if self.heap_max.len() > self.max_size {
+                self.heap_max.pop();
+            }
         }
     }
 }
