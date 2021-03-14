@@ -41,11 +41,11 @@ impl State {
 impl std::fmt::Display for State {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for val in self.heap_min.clone().into_sorted_vec() {
-            write!(f, "{:08x}", val)?;
+            write!(f, "{:08x},", val)?;
         }
         write!(f, "|")?;
         for val in self.heap_max.clone().into_sorted_vec() {
-            write!(f, "{:08x}", val.0)?;
+            write!(f, "{:08x},", val.0)?;
         }
         Ok(())
     }
