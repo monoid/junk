@@ -39,10 +39,8 @@ impl std::fmt::Display for State {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     for path in env::args().skip(1) {
         let inp = BufReader::new(File::open(&path)?);
-        eprintln!("hi");
         let mut state = State::new();
         for (a, b, c) in inp.bytes().flat_map(|r| r.ok()).tuple_windows() {
-            eprintln!("{:?}", (a, b, c));
             let hash = Hash32::hash_with_seed(&[a, b, c], 1);
             state.push(hash);
         }
