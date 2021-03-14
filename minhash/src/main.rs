@@ -29,14 +29,14 @@ impl State {
     }
 
     fn push(&mut self, val: u32) {
-        if self.heap_min.iter().find(|v| *v == &val).is_some() {
+        if self.heap_min.iter().find(|v| *v == &val).is_none() {
             self.heap_min.push(val);
             if self.heap_min.len() > self.max_size {
                 self.heap_min.pop();
             }
         }
 
-        if self.heap_max.iter().find(|v| v.0 == val).is_some() {
+        if self.heap_max.iter().find(|v| v.0 == val).is_none() {
             self.heap_max.push(Reverse(val));
             if self.heap_max.len() > self.max_size {
                 self.heap_max.pop();
