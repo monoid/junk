@@ -13,9 +13,14 @@ struct State {
 impl State {
     fn new() -> Self {
         let max_size = 5;
+        let mut heap = std::collections::BinaryHeap::with_capacity(max_size + 1);
+        // Prefill with max values for short files
+        for _ in 0..max_size {
+            heap.push(-1 as _);
+        }
         Self {
             max_size,
-            heap: std::collections::BinaryHeap::with_capacity(max_size + 1),
+            heap,
         }
     }
 
