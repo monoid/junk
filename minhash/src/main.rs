@@ -1,5 +1,5 @@
 use fasthash::{city::Hash32, FastHash};
-use itertools::Itertools as _;
+use sliding_windows::{IterExt, Storage};
 use std::fs::File;
 use std::io::{BufReader, Read as _};
 use std::{cmp::Reverse, collections::BinaryHeap, env};
@@ -59,11 +59,24 @@ impl std::fmt::Display for State {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    const WINDOW: usize = 8;
+
     for path in env::args().skip(1) {
         let inp = BufReader::new(File::open(&path)?);
         let mut state = State::new();
-        for (a, b, c) in inp.bytes().flat_map(|r| r.ok()).tuple_windows() {
-            let hash = Hash32::hash_with_seed(&[a, b, c], 1);
+        let mut storage = Storage::new(WINDOW);
+        for window in inp
+            .bytes()
+            .flat_map(|r| r.ok())
+            .sliding_windows(&mut storage)
+        {
+            let hash = Hash32::hash_with_seed(
+                &window
+                    .into_iter()
+                    .copied()
+                    .collect::<arrayvec::ArrayVec<[u8; WINDOW]>>(),
+                1,
+            );
             state.push(hash);
         }
         println!("{}\t{}", state, path);
