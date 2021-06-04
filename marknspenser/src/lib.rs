@@ -15,11 +15,14 @@
 mod mem;
 mod stack;
 
-use std::{cmp::{max, min}, fmt::Debug};
-use std::{ffi::c_void, ptr::null_mut};
-use thiserror::Error;
+use std::{
+    cmp::{max, min},
+    ffi::c_void,
+    fmt::Debug,
+};
 
 use stack::find_range_in_mem_file;
+use thiserror::Error;
 
 /**
 Type description: list of local offsets for pointers.
@@ -74,7 +77,7 @@ impl<M: mem::Mem> Drop for Arena<M> {
 
 impl<M: mem::Mem> Arena<M> {
     pub fn from_memory(memory: M) -> Result<Self, std::io::Error> {
-        let (base, len) = mem::Mem::to_raw(memory);
+        let (base, len) = mem::Mem::into_raw(memory);
 
         unsafe {
             match Self::from_range(base, len) {
@@ -166,7 +169,7 @@ impl<M: mem::Mem> Gc<M> {
         // TODO try_into()
         let mut stack = stack as *mut usize;
 
-        while stack != null_mut() {
+        while !stack.is_null() {
             stack = Self::run_gc_step(stack, &mut ptr_stack, &mut new_arena);
         }
 
