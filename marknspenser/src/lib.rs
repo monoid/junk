@@ -1,22 +1,21 @@
 /*! Primitive Mark'n'Sweep garbage collection runtime.  Please note
  * this is not a GC for Rust, but GC in Rust.
  *
- * Each object on stack or heap has a tag (tag size is a paramter) at
- * offset zero; by this tag, the runtime will know object type and
- * thus pointer offsets.
+ * Each object on stack or heap has an usize tag at offset zero; by
+ * this tag, the runtime will know object type and thus pointer
+ * offsets.  The tag also designates a moved object if it is odd (thus
+ * this code requires that allocated buffers are even-byte aligned; on
+ * some architectures some precautions should be taken.
  *
- * Each object frame has internal pointer to the parent frame.
- * However, stack frames are not moved, and they are detected by
- * comparing stack range with object address.
- *
- * Each object has an usize value: if it is even, it is TypeDesc pointer,
- * if it is odd, it is forward pointer incremented by one.
+ * Each stack frame has internal pointer to the parent frame.  Stack
+ * frames are not moved, and they are detected by its non-zero
+ * TypeDesc::parent value.
  */
 
 mod mem;
 mod stack;
 
-use std::fmt::Debug;
+use std::{cmp::{max, min}, fmt::Debug};
 use std::{ffi::c_void, ptr::null_mut};
 use thiserror::Error;
 
@@ -125,12 +124,14 @@ impl<M: mem::Mem> Arena<M> {
 
 pub struct Gc<M: mem::Mem> {
     arena: Arena<M>,
+    max_size: usize,
 }
 
 impl<M: mem::Mem> Gc<M> {
-    pub fn new(size: usize) -> Self {
+    pub fn new(size: usize, max_size: usize) -> Self {
         Gc {
             arena: Arena::from_memory(M::new(size)).unwrap(),
+            max_size,
         }
     }
 
@@ -151,18 +152,16 @@ impl<M: mem::Mem> Gc<M> {
         type_desc: &FinalTypeDesc,
         stack: *mut c_void,
     ) -> Result<*mut usize, AllocError> {
-        // We implement very simple stategy: increment heap size by
-        // object size.  It works poorly if no garbage is every freed.
-        // TODO: double with hard limit instead.
         self.gc(type_desc.size, stack)?;
-
         self.arena.alloc(type_desc)
     }
 
     unsafe fn gc(&mut self, extra_size: usize, stack: *mut c_void) -> Result<(), AllocError> {
         // TODO re-use.
         let mut ptr_stack: Vec<*mut *mut usize> = vec![];
-        let mut new_arena = Arena::from_memory(M::new(self.arena.size() + extra_size))
+        let new_size = self.arena.size() + max(self.arena.size(), extra_size);
+        let maxed_new_size = min(new_size, self.max_size);
+        let mut new_arena = Arena::from_memory(M::new(maxed_new_size))
             .expect("Failed to allocate arena; TODO better handling");
         // TODO try_into()
         let mut stack = stack as *mut usize;
@@ -319,7 +318,7 @@ mod tests {
                 parent: 1,
             },
         ];
-        let mut gc = Gc::<Box<[usize]>>::new(32);
+        let mut gc = Gc::<Box<[usize]>>::new(32, 1024);
 
         eprintln!("type_info base: {:x}", &type_info[0] as *const _ as usize);
         let mut stack = [&type_info[2] as *const _ as usize, 0usize, 0usize];
@@ -354,7 +353,7 @@ mod tests {
                 parent: 1,
             },
         ];
-        let mut gc = Gc::<Box<[usize]>>::new(1);
+        let mut gc = Gc::<Box<[usize]>>::new(1, 1024);
 
         let mut stack = [&type_info[2] as *const _ as usize, 0usize, 0usize];
         let stack_ptr = stack.as_mut_ptr() as _;
@@ -371,6 +370,35 @@ mod tests {
                 gc.arena.end.offset_from(gc.arena.current) as usize,
                 type_info[0].size + count * type_info[1].size
             );
+        }
+    }
+
+    #[test]
+    fn test_gc_alloc_overflow() {
+        let type_info = vec![
+            FinalTypeDesc {
+                size: 1,
+                offsets: vec![].into_boxed_slice(),
+                parent: 0,
+            },
+            FinalTypeDesc {
+                size: 2048,
+                offsets: vec![1].into_boxed_slice(),
+                parent: 0,
+            },
+            FinalTypeDesc {
+                size: 3,
+                offsets: vec![2].into_boxed_slice(),
+                parent: 1,
+            },
+        ];
+        let mut gc = Gc::<Box<[usize]>>::new(1, 1024);
+        let mut stack = [&type_info[2] as *const _ as usize, 0usize, 0usize];
+        let stack_ptr = stack.as_mut_ptr() as _;
+
+        unsafe {
+            stack[2] = gc.alloc(&type_info[0], stack_ptr).unwrap() as _;
+            assert!(gc.alloc(&type_info[1], stack_ptr).is_err());
         }
     }
 }
