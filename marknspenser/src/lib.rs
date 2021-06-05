@@ -259,8 +259,8 @@ pub unsafe fn read_object_info<'a>(ptr: *const usize) -> ObjectInfo<'a> {
             }
         }
         true => {
-            let forward_ptr = (tag - 1) as *const *mut usize;
-            ObjectInfo::Forward(forward_ptr.read())
+            let forward_ptr = (tag - 1) as *mut usize;
+            ObjectInfo::Forward(forward_ptr)
         }
     }
 }
@@ -323,7 +323,6 @@ mod tests {
         ];
         let mut gc = Gc::<Box<[usize]>>::new(32, 1024);
 
-        eprintln!("type_info base: {:x}", &type_info[0] as *const _ as usize);
         let mut stack = [&type_info[2] as *const _ as usize, 0usize, 0usize];
         let stack_ptr = stack.as_mut_ptr() as _;
 
@@ -351,24 +350,42 @@ mod tests {
                 parent: 0,
             },
             FinalTypeDesc {
-                size: 3,
-                offsets: vec![2].into_boxed_slice(),
+                size: 4,
+                offsets: vec![2, 3].into_boxed_slice(),
                 parent: 1,
             },
         ];
         let mut gc = Gc::<Box<[usize]>>::new(1, 1024);
 
-        let mut stack = [&type_info[2] as *const _ as usize, 0usize, 0usize];
+        let mut stack = [&type_info[2] as *const _ as usize, 0usize, 0usize, 0usize];
+        // test validity
+        assert_eq!(stack.len(), type_info[2].size);
+
         let stack_ptr = stack.as_mut_ptr() as _;
 
         let count = 100;
         unsafe {
             stack[2] = gc.alloc(&type_info[0], stack_ptr).unwrap() as _;
+            stack[3] = stack[2];
             for _ in 0..count {
                 let new_obj = gc.alloc(&type_info[1], stack_ptr).unwrap() as *mut usize;
                 new_obj.add(1).write(stack[2]);
                 stack[2] = new_obj as _;
             }
+            assert_eq!(
+                gc.arena.end.offset_from(gc.arena.current) as usize,
+                type_info[0].size + count * type_info[1].size
+            );
+
+            // Run again, with most of previously allocated objects
+            // going to the garbage.
+            stack[2] = stack[3];
+            for _ in 0..count {
+                let new_obj = gc.alloc(&type_info[1], stack_ptr).unwrap() as *mut usize;
+                new_obj.add(1).write(stack[2]);
+                stack[2] = new_obj as _;
+            }
+            // Size is the same!
             assert_eq!(
                 gc.arena.end.offset_from(gc.arena.current) as usize,
                 type_info[0].size + count * type_info[1].size
