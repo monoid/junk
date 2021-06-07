@@ -123,6 +123,10 @@ impl<M: mem::Mem> Arena<M> {
     pub fn free(&self) -> usize {
         unsafe { self.current.offset_from(self.base) as _ }
     }
+
+    pub fn contains(&self, ptr: *mut usize) -> bool {
+        (self.current <= ptr) & (ptr <= self.end)
+    }
 }
 
 pub struct Gc<M: mem::Mem> {
@@ -144,8 +148,10 @@ impl<M: mem::Mem> Gc<M> {
         type_desc: &FinalTypeDesc,
         stack: *mut c_void,
     ) -> Result<*mut c_void, AllocError> {
+        // Inlined fast path.
         match self.arena.alloc(type_desc) {
             Ok(addr) => Ok(addr as _),
+            // Slow path.
             Err(_) => self.alloc_after_gc(type_desc, stack).map(|x| x as _),
         }
     }
@@ -196,7 +202,7 @@ impl<M: mem::Mem> Gc<M> {
             }
         };
         while let Some(field) = ptr_stack.pop() {
-            move_object(field, target, ptr_stack);
+            move_object(field, field.read(), target, ptr_stack);
         }
         next
     }
@@ -218,15 +224,25 @@ unsafe fn push_fields(
 
 unsafe fn move_object<M: mem::Mem>(
     field: *mut *mut usize,
+    obj_ptr: *mut usize,
     target: &mut Arena<M>,
     ptr_stack: &mut Vec<*mut *mut usize>,
-) {
-    let obj_ptr = field.read();
-
-    field.write(match read_object_info(obj_ptr) {
-        ObjectInfo::Forward(new_loc) => {
-            // Already forwarded
-            new_loc
+) -> *mut usize {
+    let moved = match read_object_info(obj_ptr) {
+        ObjectInfo::Forward(mut new_loc) => {
+            // Already forwarded; however, it can be forwarded during
+            // previous GC failed because of memory overflow in the
+            // previous generation.  And it may be either already
+            // moved or not.  However, it cannot be moved to older
+            // generations, so checking the target arena is enough.
+            while let ObjectInfo::Forward(new_loc1) = read_object_info(new_loc) {
+                new_loc = new_loc1
+            }
+            if target.contains(new_loc) {
+                new_loc
+            } else {
+                return move_object(field, new_loc, target, ptr_stack);
+            }
         }
         ObjectInfo::Object(type_desc) => {
             // Hard lifting.
@@ -242,7 +258,10 @@ unsafe fn move_object<M: mem::Mem>(
             push_fields(new_loc, type_desc, ptr_stack);
             new_loc
         }
-    });
+    };
+
+    field.write(moved);
+    moved
 }
 
 //#[inline]
