@@ -13,7 +13,6 @@
  */
 
 mod mem;
-mod stack;
 mod stat;
 
 use std::{
@@ -22,7 +21,6 @@ use std::{
     fmt::Debug,
 };
 
-use stack::find_range_in_mem_file;
 use thiserror::Error;
 
 /**
@@ -64,7 +62,6 @@ pub struct Arena<M: mem::Mem> {
     end: *mut usize,
     current: *mut usize,
 
-    stack_range: (usize, usize),
     menace: std::marker::PhantomData<M>,
 }
 
@@ -93,12 +90,10 @@ impl<M: mem::Mem> Arena<M> {
 
     unsafe fn from_range(base: *mut usize, len: usize) -> Result<Self, std::io::Error> {
         let end = base.add(len);
-        let stack_range = find_range_in_mem_file((&end) as *const _ as usize)?.unwrap();
         Ok(Self {
             base,
             current: end,
             end,
-            stack_range,
             menace: std::marker::PhantomData,
         })
     }
