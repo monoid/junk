@@ -126,13 +126,13 @@ impl<M: mem::Mem> Arena<M> {
     }
 }
 
-pub struct Gc<M: mem::Mem, S> {
+pub struct Gc<M: mem::Mem, S: stat::Stat + Default = stat::NullStat> {
     arena: Arena<M>,
     stat: S,
     max_size: usize,
 }
 
-impl<M: mem::Mem, S: stat::Stat + Default = stat::NullStat> Gc<M, S> {
+impl<M: mem::Mem, S: stat::Stat + Default> Gc<M, S> {
     pub fn new(size: usize, max_size: usize) -> Self {
         Gc {
             arena: Arena::from_memory(M::new(size)).unwrap(),
@@ -170,7 +170,7 @@ impl<M: mem::Mem, S: stat::Stat + Default = stat::NullStat> Gc<M, S> {
         match self.arena.alloc(type_desc) {
             Ok(ptr) => {
                 self.stat.alloc(type_desc.size);
-                ptr
+                Ok(ptr)
             }
             Err(e) => Err(e),
         }

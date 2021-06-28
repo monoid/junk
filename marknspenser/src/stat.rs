@@ -74,6 +74,7 @@ impl Stat for SimpleStat {
 }
 
 /// Null stats that does nothing.
+#[derive(Default)]
 pub struct NullStat {}
 
 impl Stat for NullStat {
