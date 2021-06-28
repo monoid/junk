@@ -14,6 +14,7 @@
 
 mod mem;
 mod stack;
+mod stat;
 
 use std::{
     cmp::{max, min},
@@ -125,17 +126,24 @@ impl<M: mem::Mem> Arena<M> {
     }
 }
 
-pub struct Gc<M: mem::Mem> {
+pub struct Gc<M: mem::Mem, S> {
     arena: Arena<M>,
+    stat: S,
     max_size: usize,
 }
 
-impl<M: mem::Mem> Gc<M> {
+impl<M: mem::Mem, S: stat::Stat + Default = stat::NullStat> Gc<M, S> {
     pub fn new(size: usize, max_size: usize) -> Self {
         Gc {
             arena: Arena::from_memory(M::new(size)).unwrap(),
+            stat: Default::default(),
             max_size,
         }
+    }
+
+    #[inline]
+    pub fn fetch_stat(&self) -> stat::StatInfo {
+        self.stat.fetch_stat()
     }
 
     #[inline]
@@ -145,7 +153,10 @@ impl<M: mem::Mem> Gc<M> {
         stack: *mut c_void,
     ) -> Result<*mut c_void, AllocError> {
         match self.arena.alloc(type_desc) {
-            Ok(addr) => Ok(addr as _),
+            Ok(addr) => {
+                self.stat.alloc(type_desc.size);
+                Ok(addr as _)
+            }
             Err(_) => self.alloc_after_gc(type_desc, stack).map(|x| x as _),
         }
     }
@@ -156,7 +167,13 @@ impl<M: mem::Mem> Gc<M> {
         stack: *mut c_void,
     ) -> Result<*mut usize, AllocError> {
         self.gc(type_desc.size, stack)?;
-        self.arena.alloc(type_desc)
+        match self.arena.alloc(type_desc) {
+            Ok(ptr) => {
+                self.stat.alloc(type_desc.size);
+                ptr
+            }
+            Err(e) => Err(e),
+        }
     }
 
     unsafe fn gc(&mut self, extra_size: usize, stack: *mut c_void) -> Result<(), AllocError> {
@@ -170,14 +187,16 @@ impl<M: mem::Mem> Gc<M> {
         let mut stack = stack as *mut usize;
 
         while !stack.is_null() {
-            stack = Self::run_gc_step(stack, &mut ptr_stack, &mut new_arena);
+            stack = self.run_gc_step(stack, &mut ptr_stack, &mut new_arena);
         }
 
         std::mem::swap(&mut self.arena, &mut new_arena);
+        self.stat.gc();
         Ok(())
     }
 
     unsafe fn run_gc_step(
+        &self,
         stack: *mut usize,
         ptr_stack: &mut Vec<*mut *mut usize>,
         target: &mut Arena<M>,
@@ -196,7 +215,7 @@ impl<M: mem::Mem> Gc<M> {
             }
         };
         while let Some(field) = ptr_stack.pop() {
-            move_object(field, target, ptr_stack);
+            move_object(field, target, ptr_stack, &self.stat);
         }
         next
     }
@@ -216,10 +235,11 @@ unsafe fn push_fields(
     }
 }
 
-unsafe fn move_object<M: mem::Mem>(
+unsafe fn move_object<M: mem::Mem, S: stat::Stat>(
     field: *mut *mut usize,
     target: &mut Arena<M>,
     ptr_stack: &mut Vec<*mut *mut usize>,
+    stat: &S,
 ) {
     let obj_ptr = field.read();
 
@@ -236,6 +256,7 @@ unsafe fn move_object<M: mem::Mem>(
             let new_loc = target.alloc(type_desc).unwrap();
             // use byte copy, as it may be undefined behavior on some exotic
             // architectures.  Or not?
+            stat.move_obj(type_desc.size);
             new_loc.copy_from(obj_ptr, type_desc.size);
             // Address with tag.
             obj_ptr.write(new_loc as usize | 1);
