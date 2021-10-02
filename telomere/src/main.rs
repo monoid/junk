@@ -1,9 +1,11 @@
-use std::io::Write;
-use std::ops::DerefMut;
+mod store;
+
 use std::path::PathBuf;
 use structopt::StructOpt;
 
 use teloxide::{prelude::*, requests::ResponseResult, types::Me};
+
+use crate::store::{JsonFileStore, Store};
 
 #[derive(StructOpt, Debug)]
 struct Args {
@@ -25,19 +27,13 @@ async fn run(args: Args) {
 
     log::info!("Starting the bot {}", bot_name);
 
-    let output = std::sync::Arc::new(std::sync::Mutex::new(
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&args.output)
-            .expect("Failed to open the output file"),
-    ));
+    let store = JsonFileStore::new(&args.output).expect("Failed to open the output file");
 
     log::info!("Storing data to {:?}", args.output);
 
     teloxide::repl(bot, move |message| {
         // Clone for the async generator below.
-        let output = output.clone();
+        let store = store.clone();
 
         async move {
             let chat = &message.update.chat;
@@ -49,25 +45,10 @@ async fn run(args: Args) {
 
             log::debug!("Message: {:?}", message.update);
 
-            // Just run writing operation in the pool...  The pool and
-            // the disk are the (unlikely) bottlenecks, but it is
-            // unevitable, unless architectured differently.
-            tokio::task::spawn_blocking(move || -> Result<(), std::io::Error> {
-                let mut output = output.lock().unwrap_or_else(|e| e.into_inner());
-
-                serde_json::to_writer(output.deref_mut(), &message.update)?;
-                writeln!(&mut output)?;
-
-                output.flush()?;
-                // Sync may fail if output file is /dev/stdout.  One
-                // can selectively ignore code 25 ENOTTY.
-                let _ = output.sync_all();
-
-                Ok(())
-            })
-            .await
-            .expect("Failed to run a blocking writing operation")
-            .expect("Failed to write the message");
+            store
+                .store(message.update)
+                .await
+                .expect("Failed to write the message");
 
             ResponseResult::<()>::Ok(())
         }
