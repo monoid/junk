@@ -1,0 +1,26 @@
+[package]
+name = "lock_many"
+version = "0.1.0"
+edition = "2021"
+authors = ["Ivan Boldyrev <lispnik@gmail.com>"]
+license = "MIT"
+description = "Retry-based locking multiple mutexes at once."
+repository = "https://github.com/monoid/junk/"
+homepage = "https://github.com/monoid/junk/lock_many/"
+keywords = ["mutex", "mutexes", "parallel", "lock"]
+categories = ["concurrency"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = []
+
+[dependencies]
+arrayvec = { version = "0.7.2", optional = true }
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "bench"
+harness = false
