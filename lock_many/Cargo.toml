@@ -6,7 +6,7 @@ authors = ["Ivan Boldyrev <lispnik@gmail.com>"]
 license = "MIT"
 description = "Retry-based locking multiple mutexes at once."
 repository = "https://github.com/monoid/junk/"
-homepage = "https://github.com/monoid/junk/lock_many/"
+homepage = "https://github.com/monoid/junk/tree/master/lock_many"
 keywords = ["mutex", "mutexes", "parallel", "lock"]
 categories = ["concurrency"]
 
