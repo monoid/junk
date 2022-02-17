@@ -1,3 +1,4 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
 
 use std::{
@@ -40,7 +41,6 @@ pub fn lock_many_vec<'a, T>(
 }
 
 // TODO replace both implementations with macro.
-#[cfg(feature = "arrayvec")]
 /**
  * Lock several locks at once.  Algorithms is taken from the gcc's libstdc++:
  * lock the first lock and try_lock the next one; if some one fails,
@@ -48,6 +48,8 @@ pub fn lock_many_vec<'a, T>(
  *
  * However, the order of result items does match the order of the input mutexes.
  */
+#[cfg(feature = "arrayvec")]
+#[cfg_attr(docsrs, doc(cfg(feature = "arrayvec")))]
 pub fn lock_many_arrayvec<'a, T, const N: usize>(
     mutices: &[&'a Mutex<T>],
 ) -> Result<arrayvec::ArrayVec<MutexGuard<'a, T>, N>, PoisonError<MutexGuard<'a, T>>> {
