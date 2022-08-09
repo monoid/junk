@@ -40,6 +40,7 @@ async fn run(args: Args) {
             // Ignore non-group messages
             if chat.is_private() {
                 log::debug!("Private: {:?}", message.update);
+                log::info!("User ID: {}", chat.id);
                 return ResponseResult::<()>::Ok(());
             }
 
