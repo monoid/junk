@@ -15,12 +15,12 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
+    pretty_env_logger::init();
     let args = Args::from_args();
     run(args).await
 }
 
 async fn run(args: Args) {
-    teloxide::enable_logging!();
     let bot = Bot::from_env().auto_send();
     let Me { user: bot_user, .. } = bot.get_me().await.unwrap();
     let bot_name = bot_user.username.expect("Bots must have usernames");
@@ -31,27 +31,26 @@ async fn run(args: Args) {
 
     log::info!("Storing data to {:?}", args.output);
 
-    teloxide::repl(bot, move |message| {
+    teloxide::repl(bot, move |message: Message| {
         // Clone for the async generator below.
         let store = store.clone();
 
         async move {
-            let chat = &message.update.chat;
+            let chat = &message.chat;
             // Ignore non-group messages
             if chat.is_private() {
-                log::debug!("Private: {:?}", message.update);
                 log::info!("User ID: {}", chat.id);
                 return ResponseResult::<()>::Ok(());
             }
 
-            log::debug!("Message: {:?}", message.update);
+            log::debug!("Message: {:?}", message);
 
             store
-                .store(message.update)
+                .store(message)
                 .await
                 .expect("Failed to write the message");
 
-            ResponseResult::<()>::Ok(())
+            Ok(())
         }
     })
     .await;
