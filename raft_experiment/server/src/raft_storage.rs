@@ -49,6 +49,7 @@ impl<T> FileStorage<T> {
 #[async_trait]
 impl async_raft::RaftStorage<model::Change, model::ClientResponse> for FileStorage<model::State> {
     type Snapshot = tokio::fs::File;
+    type ShutdownError = std::io::Error;
 
     async fn get_membership_config(&self) -> anyhow::Result<async_raft::raft::MembershipConfig> {
         todo!()
@@ -110,7 +111,6 @@ impl async_raft::RaftStorage<model::Change, model::ClientResponse> for FileStora
 
     async fn do_log_compaction(
         &self,
-        through: u64,
     ) -> anyhow::Result<async_raft::storage::CurrentSnapshotData<Self::Snapshot>> {
         let data = {
             let state = self.state.read().await;

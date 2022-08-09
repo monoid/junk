@@ -77,7 +77,7 @@ impl Default for RaftRouter {
 }
 
 #[async_trait]
-impl<A: async_raft::AppData> RaftNetwork<A> for RaftRouter {
+impl<A: async_raft::AppData + Debug> RaftNetwork<A> for RaftRouter {
     /// Append entries to target Raft node.
     async fn append_entries(
         &self,
@@ -138,7 +138,7 @@ pub(crate) async fn network_server_endpoint<S>(
         raft: Arc<Raft<A, R, RaftRouter, S>>,
     ) -> anyhow::Result<Response>
     where
-        A: async_raft::AppData,
+        A: async_raft::AppData + Debug,
         R: async_raft::AppDataResponse,
         S: async_raft::RaftStorage<A, R>,
     {
@@ -158,7 +158,7 @@ pub(crate) async fn network_server_endpoint<S>(
         raft: Arc<Raft<A, R, RaftRouter, S>>,
     ) -> anyhow::Result<Response>
     where
-        A: async_raft::AppData,
+        A: async_raft::AppData + Debug,
         R: async_raft::AppDataResponse,
         S: async_raft::RaftStorage<A, R>,
     {
@@ -177,7 +177,7 @@ pub(crate) async fn network_server_endpoint<S>(
         raft: Arc<Raft<A, R, RaftRouter, S>>,
     ) -> anyhow::Result<Response>
     where
-        A: async_raft::AppData,
+        A: async_raft::AppData + Debug,
         R: async_raft::AppDataResponse,
         S: async_raft::RaftStorage<A, R>,
     {

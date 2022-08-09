@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use thiserror::Error;
-use tokio::io::{self, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{self, AsyncReadExt, AsyncWrite, AsyncSeek, AsyncWriteExt, AsyncSeekExt};
 use tokio::{fs, sync};
 use pin_project_lite::pin_project;
 
@@ -25,9 +25,8 @@ use pin_project_lite::pin_project;
 
 // TODO: rename, it is not only about buffered files.
 #[async_trait]
-pub trait AsyncBufFile: AsyncWrite {
+pub trait AsyncBufFile: AsyncWrite + AsyncSeek {
     async fn sync_data(&mut self) -> io::Result<()>;
-    async fn seek(&mut self, from: SeekFrom) -> io::Result<u64>;
     async fn tell(&mut self) -> io::Result<u64>;
 }
 
@@ -89,15 +88,22 @@ impl AsyncBufFile for TrackingBufFile {
         self.nested.get_mut().sync_data().await
     }
 
-    async fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
-        self.nested.flush().await?;
-        let newpos = self.nested.get_mut().seek(from).await?;
-        self.pos = newpos;
-        Ok(newpos)
-    }
-
     async fn tell(&mut self) -> io::Result<u64> {
         Ok(self.pos)
+    }
+}
+
+impl AsyncSeek for TrackingBufFile {
+    fn start_seek(mut self: Pin<&mut Self>, position: SeekFrom) -> std::io::Result<()> {
+        Pin::new(&mut self.nested).start_seek(position)
+    }
+
+    fn poll_complete(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<u64>> {
+        let poll = Pin::new(&mut self.nested).poll_complete(cx);
+        if let std::task::Poll::Ready(Ok(newpos)) = &poll {
+            self.pos = *newpos;
+        }
+        poll
     }
 }
 
@@ -105,10 +111,6 @@ impl AsyncBufFile for TrackingBufFile {
 impl AsyncBufFile for fs::File {
     async fn sync_data(&mut self) -> io::Result<()> {
         fs::File::sync_data(self).await
-    }
-
-    async fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
-        fs::File::seek(self, from).await
     }
 
     async fn tell(&mut self) -> io::Result<u64> {

@@ -87,7 +87,7 @@ impl<
         queue: Arc<sync::Mutex<Self>>,
         flush_timeout: Duration,
     ) -> (JoinHandle<()>, AbortHandle) {
-        let delay = time::delay_for(flush_timeout);
+        let delay = time::sleep(flush_timeout);
         let (delay, handle) = abortable(delay);
 
         let flusher = async move {
