@@ -12,7 +12,7 @@ fn crc64f(s: &str) -> u64 {
 
 #[inline]
 fn cityhash64f(s: &str) -> u64 {
-    cityhash::city_hash_64(s.as_bytes())
+    cityhash_sys::city_hash_64(s.as_bytes())
 }
 
 #[inline]

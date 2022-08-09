@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 crc64 = "*"
-cityhash = "*"
+cityhash-sys = "*"
 
 [dev-dependencies]
 criterion = "*"
