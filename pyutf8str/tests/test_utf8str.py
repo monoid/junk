@@ -1,7 +1,7 @@
 import pyutf8str
 import pytest
 
-SAMPLES = ["", "test", "tést", "тест", "test🤪"]
+SAMPLES = ["", "test", "tést", "t\x7Fst", "t\x80st" "тест", "t\uFFFFst", "test🤪"]
 
 
 @pytest.mark.parametrize("uni", SAMPLES)

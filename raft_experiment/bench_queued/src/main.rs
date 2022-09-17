@@ -16,25 +16,33 @@ async fn main() {
         // flush_timeout: Duration::from_millis(1000/30)
     };
 
-    let log_writer = batch::BatchLogWriter::new(
-        storage::SimpleFileWAL::new(
-            data_file,
-            index_file,
-            // was: 201.73 trans/sec, on my notebook's SSD
-            // now: 4301 with 32 req threads and buffer of 31
-            //
-            // was ~60 trans/sec on FastVPS' shared HDD.
-            // now 1800 trans/sec with 32 threads and buffer of 31
-            //     2305 trans/sec with 64 threads and buffer of 63
-            storage::SyncDataFileSyncer::default(),
+    // was: 201.73 trans/sec, on my notebook's SSD
+    // now: 4301 with 32 req threads and buffer of 31
+    //
+    // was ~60 trans/sec on FastVPS' shared HDD.
+    // now 1800 trans/sec with 32 threads and buffer of 31
+    //     2305 trans/sec with 64 threads and buffer of 63
+    let syncer = storage::SyncDataFileSyncer::default();
+
+    eprintln!("wal");
+    let wal = storage::SimpleFileWAL::new(
+        data_file,
+        index_file,
+        syncer,
             //
             // was: 10582.01 trans/sec on my notebook's SSD
             // now: 11510.79, nothing really changed (and it shouldn't)
             // storage::NoopFileSyncer::default(),
         )
         .await
-        .unwrap(),
+        .unwrap();
+
+    eprintln!("log_writer");
+    let log_writer = batch::BatchLogWriter::new(
+        wal,
         config,
     );
+
+    eprintln!("Main");
     server::main(log_writer).await.unwrap();
 }
