@@ -1,15 +1,15 @@
 mod store;
 
 use std::path::PathBuf;
-use structopt::StructOpt;
+use clap::Parser;
 
 use teloxide::{prelude::*, requests::ResponseResult, types::Me};
 
 use crate::store::{JsonFileStore, Store};
 
-#[derive(StructOpt, Debug)]
+#[derive(Parser, Debug)]
 struct Args {
-    #[structopt(parse(from_os_str))]
+    #[clap(parse(from_os_str))]
     output: PathBuf,
 }
 
