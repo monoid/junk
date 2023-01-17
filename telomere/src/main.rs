@@ -21,7 +21,7 @@ async fn main() {
 }
 
 async fn run(args: Args) {
-    let bot = Bot::from_env().auto_send();
+    let bot = Bot::from_env();
     let Me { user: bot_user, .. } = bot.get_me().await.unwrap();
     let bot_name = bot_user.username.expect("Bots must have usernames");
 
