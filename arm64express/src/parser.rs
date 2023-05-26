@@ -37,8 +37,8 @@ pub(crate) fn parse_add(inp: &str) -> IResult<&str, ast::Ast> {
             rights
                 .into_iter()
                 .fold(left, |left, right_op| match right_op {
-                    (AddOp::Add, right) => ast::Ast::Add(left.into(), right.into()),
-                    (AddOp::Sub, right) => ast::Ast::Sub(left.into(), right.into()),
+                    (AddOp::Add, right) => ast::Ast::add(left, right),
+                    (AddOp::Sub, right) => ast::Ast::sub(left, right),
                 })
         },
     )(inp)
@@ -65,8 +65,8 @@ pub(crate) fn parse_prod(inp: &str) -> IResult<&str, ast::Ast> {
             rights
                 .into_iter()
                 .fold(left, |left, right_op| match right_op {
-                    (ProdOp::Mul, second) => ast::Ast::Mul(left.into(), second.into()),
-                    (ProdOp::Div, second) => ast::Ast::Div(left.into(), second.into()),
+                    (ProdOp::Mul, second) => ast::Ast::mul(left, second),
+                    (ProdOp::Div, second) => ast::Ast::div(left, second),
                 })
         },
     )(inp)
@@ -78,8 +78,8 @@ fn parse_atom(inp: &str) -> IResult<&str, ast::Ast> {
     use nom::sequence::delimited;
 
     alt((
-        map(i32, ast::Ast::Const),
-        map(alpha1, |s: &str| ast::Ast::Var(s.into())),
+        map(i32, ast::Ast::literal),
+        map(alpha1, |s: &str| ast::Ast::var(s.into())),
         delimited(tag("("), parse_expr, tag(")")),
     ))(inp)
 }

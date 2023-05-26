@@ -13,6 +13,30 @@ pub(crate) enum Ast {
 }
 
 impl Ast {
+    pub(crate) fn literal(val: Val) -> Self {
+        Self::Const(val)
+    }
+
+    pub(crate) fn var(var: Var) -> Self {
+        Self::Var(var)
+    }
+
+    pub(crate) fn add(left: impl Into<Box<Ast>>, right: impl Into<Box<Ast>>) -> Self {
+        Self::Add(left.into(), right.into())
+    }
+
+    pub(crate) fn sub(left: impl Into<Box<Ast>>, right: impl Into<Box<Ast>>) -> Self {
+        Self::Sub(left.into(), right.into())
+    }
+
+    pub(crate) fn mul(left: impl Into<Box<Ast>>, right: impl Into<Box<Ast>>) -> Self {
+        Self::Mul(left.into(), right.into())
+    }
+
+    pub(crate) fn div(left: impl Into<Box<Ast>>, right: impl Into<Box<Ast>>) -> Self {
+        Self::Div(left.into(), right.into())
+    }
+
     pub(crate) fn eval(&self, env: &HashMap<Var, Val>) -> Result<Val, Box<dyn std::error::Error>> {
         match self {
             Ast::Const(val) => Ok(*val),
