@@ -10,8 +10,8 @@ pub(crate) struct Node {
 }
 
 impl Node {
-    fn new(ast: Ast) -> Self {
-        Self { ast, weight: 0 }
+    fn new(ast: Ast, weight: usize) -> Self {
+        Self { ast, weight }
     }
 
     pub(crate) fn eval(&self, env: &HashMap<Var, Val>) -> Result<Val, Box<dyn std::error::Error>> {
@@ -19,27 +19,38 @@ impl Node {
     }
 
     pub(crate) fn literal(val: impl Into<Val>) -> Self {
-        Self::new(Ast::Literal(val.into()))
+        Self::new(Ast::Literal(val.into()), 0)
     }
 
     pub(crate) fn var(var: impl Into<Var>) -> Self {
-        Self::new(Ast::Var(var.into()))
+        Self::new(Ast::Var(var.into()), 0)
     }
 
     pub(crate) fn add(left: impl Into<Box<Self>>, right: impl Into<Box<Self>>) -> Self {
-        Self::new(Ast::Add(left.into(), right.into()))
+        Self::binop(Ast::Add, left, right)
     }
 
     pub(crate) fn sub(left: impl Into<Box<Self>>, right: impl Into<Box<Self>>) -> Self {
-        Self::new(Ast::Sub(left.into(), right.into()))
+        Self::binop(Ast::Sub, left, right)
     }
 
     pub(crate) fn mul(left: impl Into<Box<Self>>, right: impl Into<Box<Self>>) -> Self {
-        Self::new(Ast::Mul(left.into(), right.into()))
+        Self::binop(Ast::Mul, left, right)
     }
 
     pub(crate) fn div(left: impl Into<Box<Self>>, right: impl Into<Box<Self>>) -> Self {
-        Self::new(Ast::Div(left.into(), right.into()))
+        Self::binop(Ast::Div, left, right)
+    }
+
+    fn binop(
+        op: impl Fn(Box<Self>, Box<Self>) -> Ast,
+        left: impl Into<Box<Self>>,
+        right: impl Into<Box<Self>>,
+    ) -> Self {
+        let left = left.into();
+        let right = right.into();
+        let weight = 1 + left.weight + right.weight;
+        Self::new(op(left, right), weight)
     }
 }
 
