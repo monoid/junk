@@ -6,17 +6,17 @@ use nom::IResult;
 
 use crate::ast;
 
-pub(crate) fn parse(inp: &str) -> IResult<&str, ast::Ast> {
+pub(crate) fn parse(inp: &str) -> IResult<&str, ast::Node> {
     use nom::combinator::all_consuming;
 
     all_consuming(parse_expr)(inp)
 }
 
-pub(crate) fn parse_expr(inp: &str) -> IResult<&str, ast::Ast> {
+pub(crate) fn parse_expr(inp: &str) -> IResult<&str, ast::Node> {
     parse_add(inp)
 }
 
-pub(crate) fn parse_add(inp: &str) -> IResult<&str, ast::Ast> {
+pub(crate) fn parse_add(inp: &str) -> IResult<&str, ast::Node> {
     use nom::sequence::pair;
 
     #[derive(Clone)]
@@ -37,14 +37,14 @@ pub(crate) fn parse_add(inp: &str) -> IResult<&str, ast::Ast> {
             rights
                 .into_iter()
                 .fold(left, |left, right_op| match right_op {
-                    (AddOp::Add, right) => ast::Ast::add(left, right),
-                    (AddOp::Sub, right) => ast::Ast::sub(left, right),
+                    (AddOp::Add, right) => ast::Node::add(left, right),
+                    (AddOp::Sub, right) => ast::Node::sub(left, right),
                 })
         },
     )(inp)
 }
 
-pub(crate) fn parse_prod(inp: &str) -> IResult<&str, ast::Ast> {
+pub(crate) fn parse_prod(inp: &str) -> IResult<&str, ast::Node> {
     use nom::sequence::pair;
 
     #[derive(Clone)]
@@ -65,21 +65,21 @@ pub(crate) fn parse_prod(inp: &str) -> IResult<&str, ast::Ast> {
             rights
                 .into_iter()
                 .fold(left, |left, right_op| match right_op {
-                    (ProdOp::Mul, second) => ast::Ast::mul(left, second),
-                    (ProdOp::Div, second) => ast::Ast::div(left, second),
+                    (ProdOp::Mul, second) => ast::Node::mul(left, second),
+                    (ProdOp::Div, second) => ast::Node::div(left, second),
                 })
         },
     )(inp)
 }
 
-fn parse_atom(inp: &str) -> IResult<&str, ast::Ast> {
+fn parse_atom(inp: &str) -> IResult<&str, ast::Node> {
     use nom::character::complete::alpha1;
     use nom::character::complete::i32;
     use nom::sequence::delimited;
 
     alt((
-        map(i32, ast::Ast::literal),
-        map(alpha1, |s: &str| ast::Ast::var(s.into())),
+        map(i32, ast::Node::literal),
+        map(alpha1, ast::Node::var),
         delimited(tag("("), parse_expr, tag(")")),
     ))(inp)
 }

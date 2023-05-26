@@ -3,40 +3,56 @@ use std::collections::HashMap;
 pub(crate) type Var = String;
 pub(crate) type Val = i32;
 
+pub(crate) struct Node {
+    ast: Ast,
+    #[allow(dead_code)]
+    weight: usize,
+}
+
+impl Node {
+    fn new(ast: Ast) -> Self {
+        Self { ast, weight: 0 }
+    }
+
+    pub(crate) fn eval(&self, env: &HashMap<Var, Val>) -> Result<Val, Box<dyn std::error::Error>> {
+        self.ast.eval(env)
+    }
+
+    pub(crate) fn literal(val: impl Into<Val>) -> Self {
+        Self::new(Ast::Literal(val.into()))
+    }
+
+    pub(crate) fn var(var: impl Into<Var>) -> Self {
+        Self::new(Ast::Var(var.into()))
+    }
+
+    pub(crate) fn add(left: impl Into<Box<Self>>, right: impl Into<Box<Self>>) -> Self {
+        Self::new(Ast::Add(left.into(), right.into()))
+    }
+
+    pub(crate) fn sub(left: impl Into<Box<Self>>, right: impl Into<Box<Self>>) -> Self {
+        Self::new(Ast::Sub(left.into(), right.into()))
+    }
+
+    pub(crate) fn mul(left: impl Into<Box<Self>>, right: impl Into<Box<Self>>) -> Self {
+        Self::new(Ast::Mul(left.into(), right.into()))
+    }
+
+    pub(crate) fn div(left: impl Into<Box<Self>>, right: impl Into<Box<Self>>) -> Self {
+        Self::new(Ast::Div(left.into(), right.into()))
+    }
+}
+
 pub(crate) enum Ast {
     Literal(Val),
     Var(Var),
-    Add(Box<Ast>, Box<Ast>),
-    Sub(Box<Ast>, Box<Ast>),
-    Mul(Box<Ast>, Box<Ast>),
-    Div(Box<Ast>, Box<Ast>),
+    Add(Box<Node>, Box<Node>),
+    Sub(Box<Node>, Box<Node>),
+    Mul(Box<Node>, Box<Node>),
+    Div(Box<Node>, Box<Node>),
 }
 
 impl Ast {
-    pub(crate) fn literal(val: Val) -> Self {
-        Self::Literal(val)
-    }
-
-    pub(crate) fn var(var: Var) -> Self {
-        Self::Var(var)
-    }
-
-    pub(crate) fn add(left: impl Into<Box<Ast>>, right: impl Into<Box<Ast>>) -> Self {
-        Self::Add(left.into(), right.into())
-    }
-
-    pub(crate) fn sub(left: impl Into<Box<Ast>>, right: impl Into<Box<Ast>>) -> Self {
-        Self::Sub(left.into(), right.into())
-    }
-
-    pub(crate) fn mul(left: impl Into<Box<Ast>>, right: impl Into<Box<Ast>>) -> Self {
-        Self::Mul(left.into(), right.into())
-    }
-
-    pub(crate) fn div(left: impl Into<Box<Ast>>, right: impl Into<Box<Ast>>) -> Self {
-        Self::Div(left.into(), right.into())
-    }
-
     pub(crate) fn eval(&self, env: &HashMap<Var, Val>) -> Result<Val, Box<dyn std::error::Error>> {
         match self {
             Ast::Literal(val) => Ok(*val),
