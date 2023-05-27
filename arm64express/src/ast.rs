@@ -4,14 +4,20 @@ pub(crate) type Var = String;
 pub(crate) type Val = i32;
 
 pub(crate) struct Node {
-    ast: Ast,
+    pub(crate) ast: Ast,
     #[allow(dead_code)]
     weight: usize,
+    // Actually, with the constant propagation implemented, it is true only for Ast::Literal.
+    is_const: bool,
 }
 
 impl Node {
-    fn new(ast: Ast, weight: usize) -> Self {
-        Self { ast, weight }
+    fn new(ast: Ast, weight: usize, is_const: bool) -> Self {
+        Self {
+            ast,
+            weight,
+            is_const,
+        }
     }
 
     pub(crate) fn eval(&self, env: &HashMap<Var, Val>) -> Result<Val, Box<dyn std::error::Error>> {
@@ -19,11 +25,11 @@ impl Node {
     }
 
     pub(crate) fn literal(val: impl Into<Val>) -> Self {
-        Self::new(Ast::Literal(val.into()), 0)
+        Self::new(Ast::Literal(val.into()), 0, true)
     }
 
     pub(crate) fn var(var: impl Into<Var>) -> Self {
-        Self::new(Ast::Var(var.into()), 0)
+        Self::new(Ast::Var(var.into()), 0, false)
     }
 
     pub(crate) fn add(left: impl Into<Box<Self>>, right: impl Into<Box<Self>>) -> Self {
@@ -50,7 +56,16 @@ impl Node {
         let left = left.into();
         let right = right.into();
         let weight = 1 + left.weight + right.weight;
-        Self::new(op(left, right), weight)
+        let is_const = left.is_const & right.is_const;
+        let node = Self::new(op(left, right), weight, is_const);
+
+        if is_const {
+            if let Ok(val) = node.eval(&<_>::default()) {
+                return Node::literal(val);
+            }
+        }
+        // else
+        node
     }
 }
 
