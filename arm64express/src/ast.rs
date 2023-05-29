@@ -6,17 +6,19 @@ pub(crate) type Val = i32;
 pub(crate) struct Node {
     pub(crate) ast: Ast,
     #[allow(dead_code)]
-    weight: usize,
+    pub(crate) weight: usize,
     // Actually, with the constant propagation implemented, it is true only for Ast::Literal.
-    is_const: bool,
+    pub(crate) is_const: bool,
+    pub(crate) stack_size: usize,
 }
 
 impl Node {
-    fn new(ast: Ast, weight: usize, is_const: bool) -> Self {
+    fn new(ast: Ast, weight: usize, is_const: bool, stack_size: usize) -> Self {
         Self {
             ast,
             weight,
             is_const,
+            stack_size,
         }
     }
 
@@ -25,11 +27,11 @@ impl Node {
     }
 
     pub(crate) fn literal(val: impl Into<Val>) -> Self {
-        Self::new(Ast::Literal(val.into()), 0, true)
+        Self::new(Ast::Literal(val.into()), 0, true, 0)
     }
 
     pub(crate) fn var(var: impl Into<Var>) -> Self {
-        Self::new(Ast::Var(var.into()), 0, false)
+        Self::new(Ast::Var(var.into()), 0, false, 0)
     }
 
     pub(crate) fn add(left: impl Into<Box<Self>>, right: impl Into<Box<Self>>) -> Self {
@@ -58,8 +60,9 @@ impl Node {
 
         let weight = get_weight(left.weight, right.weight);
         let is_const = get_is_const(left.is_const, right.is_const);
+        let stack_size = get_stack_size(left.stack_size, right.stack_size);
 
-        let node = Self::new(op(left, right), weight, is_const);
+        let node = Self::new(op(left, right), weight, is_const, stack_size);
 
         if is_const {
             if let Ok(val) = node.eval(&<_>::default()) {
@@ -77,6 +80,14 @@ fn get_weight(left_weight: usize, right_weight: usize) -> usize {
 
 fn get_is_const(left_is_const: bool, right_is_const: bool) -> bool {
     left_is_const & right_is_const
+}
+
+fn get_stack_size(left_size: usize, right_size: usize) -> usize {
+    match left_size.cmp(&right_size) {
+        std::cmp::Ordering::Less => right_size,
+        std::cmp::Ordering::Equal => 1 + left_size,
+        std::cmp::Ordering::Greater => left_size,
+    }
 }
 
 pub(crate) enum Ast {
