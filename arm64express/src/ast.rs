@@ -55,8 +55,10 @@ impl Node {
     ) -> Self {
         let left = left.into();
         let right = right.into();
-        let weight = 1 + left.weight + right.weight;
-        let is_const = left.is_const & right.is_const;
+
+        let weight = get_weight(left.weight, right.weight);
+        let is_const = get_is_const(left.is_const, right.is_const);
+
         let node = Self::new(op(left, right), weight, is_const);
 
         if is_const {
@@ -67,6 +69,14 @@ impl Node {
         // else
         node
     }
+}
+
+fn get_weight(left_weight: usize, right_weight: usize) -> usize {
+    1 + left_weight + right_weight
+}
+
+fn get_is_const(left_is_const: bool, right_is_const: bool) -> bool {
+    left_is_const & right_is_const
 }
 
 pub(crate) enum Ast {
