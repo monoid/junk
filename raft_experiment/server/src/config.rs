@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::convert::From;
 use std::fs::File;
 use std::io;
+use std::path::Path;
 
 #[derive(Deserialize)]
 pub struct Config {
@@ -35,7 +36,7 @@ impl From<serde_yaml::Error> for Error {
     }
 }
 
-pub fn load_config(path: &str) -> Result<Config, Error> {
+pub fn load_config(path: &Path) -> Result<Config, Error> {
     let mut file = File::open(path)?;
     return Ok(serde_yaml::from_reader(&mut file)?);
 }

@@ -1,7 +1,7 @@
 mod store;
 
-use std::path::PathBuf;
 use clap::Parser;
+use std::path::PathBuf;
 
 use teloxide::{prelude::*, requests::ResponseResult, types::Me};
 
@@ -9,14 +9,13 @@ use crate::store::{JsonFileStore, Store};
 
 #[derive(Parser, Debug)]
 struct Args {
-    #[clap(parse(from_os_str))]
     output: PathBuf,
 }
 
 #[tokio::main]
 async fn main() {
     pretty_env_logger::init();
-    let args = Args::from_args();
+    let args = Args::parse();
     run(args).await
 }
 

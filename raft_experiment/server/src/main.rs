@@ -2,42 +2,35 @@ mod config;
 mod model;
 mod raft_network;
 mod raft_storage;
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use clap;
+use clap::Parser;
 use tokio;
 use tokio::join;
 
+#[derive(Debug, Parser)]
+#[clap(
+    version = "1.1.1.1.1.1.1.1",
+    author = "monoid",
+    about = "Simple RAFT experiment"
+)]
+struct Args {
+    config: PathBuf,
+    #[arg(long = "self")]
+    self_id: u64,
+}
+
 #[tokio::main]
 pub async fn main() {
-    let matches = clap::App::new("Simple RAFT experiment")
-        .version("1.1.1.1.1.1.1")
-        .author("monoid")
-        .arg(
-            clap::Arg::with_name("config")
-                .long("config")
-                .required(true)
-                .takes_value(true),
-        )
-        .arg(
-            clap::Arg::with_name("self")
-                .long("self")
-                .required(true)
-                .takes_value(true),
-        )
-        .get_matches();
-
-    let path = matches
-        .value_of("config")
-        .expect("YAML config path expected");
-    let conf = config::load_config(&path).expect("Valid YAML config expected");
-    let node_self = matches.value_of("self").expect("self name expected");
+    let args = Args::parse();
+    let conf = config::load_config(&args.config).expect("Valid YAML config expected");
 
     eprintln!(
         "HTTP port: {}, RAFT port: {}",
         conf.http_port, conf.raft_port
     );
-    eprintln!("Self: {}", node_self);
+    eprintln!("Self ID: {}", args.self_id);
     eprintln!("Nodes:");
     for n in &conf.nodes {
         eprintln!("{}", n);
@@ -45,13 +38,12 @@ pub async fn main() {
     let config = conf.raft_config.validate();
     eprintln!("Raft config: {:?}", config);
 
-    let node_id = node_self.parse().unwrap();
-    let storage = memstore::MemStore::new(node_id);
+    let storage = memstore::MemStore::new(args.self_id);
     let network = Arc::new(raft_network::RaftRouter::with_nodes(&conf.nodes));
     let network1 = network.clone();
 
     let raft = async_raft::Raft::new(
-        node_id,
+        args.self_id,
         Arc::new(config.expect("Expected valid config")),
         network,
         Arc::new(storage),
