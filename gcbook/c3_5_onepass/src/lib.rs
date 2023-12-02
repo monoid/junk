@@ -1,9 +1,11 @@
 pub type CELL = u64;
 
+#[inline]
 pub fn popcnt_count(cell: CELL) -> u32 {
     cell.count_ones()
 }
 
+#[inline]
 pub fn table_count(cell: CELL) -> u32 {
     (0..8).map(|off| c(cell >> (8 * off))).sum()
 }
@@ -271,3 +273,32 @@ const TABLE: [u8; 256] = [
     7, // 254
     8, // 255
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cmp() {
+        for i in [
+            0u64,
+            1,
+            2,
+            3,
+            255,
+            256,
+            0x01_03_07_1E_F1_F3_F7_FF,
+            0x01_02_04_08_10_20_40_80,
+            2411560226445680428,
+        ] {
+            assert_eq!(popcnt_count(i), table_count(i));
+        }
+    }
+
+    #[test]
+    fn test_cmp_range() {
+        for i in 0..=((u32::MAX as u64) >> 1) {
+            assert_eq!(popcnt_count(i), table_count(i));
+        }
+    }
+}
