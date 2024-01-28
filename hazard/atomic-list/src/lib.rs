@@ -81,6 +81,7 @@ impl LockFreeList {
             next: AtomicPtr::default(),
             value: value.into(),
         });
+        let node_ptr = node.as_ref() as *const RawNode as _;
 
         self.len.fetch_add(1, Ordering::Relaxed);
 
@@ -90,7 +91,7 @@ impl LockFreeList {
 
             match self.next.compare_exchange_weak(
                 root,
-                node.as_ref() as *const RawNode as _,
+                node_ptr,
                 Ordering::Release,
                 Ordering::Acquire,
             ) {
