@@ -81,22 +81,19 @@ impl LockFreeList {
             next: AtomicPtr::default(),
             value: value.into(),
         });
-        let node_ptr = node.as_ref() as *const RawNode as _;
+        let node = Box::into_raw(node);
 
         self.len.fetch_add(1, Ordering::Relaxed);
 
         let mut root = self.next.load(Ordering::Acquire);
         loop {
-            node.next.store(root, Ordering::Relaxed);
+            unsafe { &*node }.next.store(root, Ordering::Relaxed);
 
-            match self.next.compare_exchange_weak(
-                root,
-                node_ptr,
-                Ordering::Release,
-                Ordering::Acquire,
-            ) {
+            match self
+                .next
+                .compare_exchange_weak(root, node, Ordering::Release, Ordering::Acquire)
+            {
                 Ok(_) => {
-                    let node = Box::into_raw(node) as _;
                     return {
                         NodeGuard {
                             node,
