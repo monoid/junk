@@ -1,4 +1,5 @@
 use std::{
+    marker::PhantomData,
     ops::Deref,
     sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
 };
@@ -11,7 +12,8 @@ pub struct RawNode {
 }
 
 pub struct NodeGuard<'list> {
-    node: &'list RawNode,
+    node: *const RawNode,
+    phantom: PhantomData<&'list RawNode>,
 }
 
 // TODO with this, we may store zero to a pointer, and it will be hijacked.
@@ -20,13 +22,13 @@ impl Deref for NodeGuard<'_> {
     type Target = AtomicUsize;
 
     fn deref(&self) -> &Self::Target {
-        &self.node.value
+        &unsafe { &*self.node }.value
     }
 }
 
 impl Drop for NodeGuard<'_> {
     fn drop(&mut self) {
-        self.node.value.store(0, Ordering::Release);
+        unsafe { &*self.node }.value.store(0, Ordering::Release);
     }
 }
 
@@ -64,6 +66,7 @@ impl LockFreeList {
                 {
                     return Some(NodeGuard {
                         node: n,
+                        phantom: PhantomData,
                     });
                 } else {
                     node = n.next.load(Ordering::Acquire).as_ref();
@@ -92,10 +95,11 @@ impl LockFreeList {
                 Ordering::Acquire,
             ) {
                 Ok(_) => {
-                    let node = Box::into_raw(node);
-                    return unsafe {
+                    let node = Box::into_raw(node) as _;
+                    return {
                         NodeGuard {
-                            node: &*node,
+                            node,
+                            phantom: PhantomData,
                         }
                     };
                 }
