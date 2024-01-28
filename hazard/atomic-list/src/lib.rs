@@ -1,5 +1,4 @@
 use std::{
-    marker::PhantomData,
     ops::Deref,
     sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
 };
@@ -11,14 +10,13 @@ pub struct RawNode {
     pub value: AtomicUsize,
 }
 
-pub struct NodeGuard<'list, T> {
+pub struct NodeGuard<'list> {
     node: &'list RawNode,
-    phantom: PhantomData<&'list T>,
 }
 
 // TODO with this, we may store zero to a pointer, and it will be hijacked.
 // Is it even a problem?  Sure it is.
-impl<T> Deref for NodeGuard<'_, T> {
+impl Deref for NodeGuard<'_> {
     type Target = AtomicUsize;
 
     fn deref(&self) -> &Self::Target {
@@ -26,7 +24,7 @@ impl<T> Deref for NodeGuard<'_, T> {
     }
 }
 
-impl<T> Drop for NodeGuard<'_, T> {
+impl Drop for NodeGuard<'_> {
     fn drop(&mut self) {
         self.node.value.store(0, Ordering::Release);
     }
@@ -50,7 +48,7 @@ impl LockFreeList {
         self.len.load(Ordering::Relaxed)
     }
 
-    pub fn get_node<T>(&self, value: *const T) -> Option<NodeGuard<'_, T>> {
+    pub fn get_node<T>(&self, value: *const T) -> Option<NodeGuard<'_>> {
         if value.is_null() {
             // null is a special value in the list, and it doesn't need a deallocation.
             return None;
@@ -66,7 +64,6 @@ impl LockFreeList {
                 {
                     return Some(NodeGuard {
                         node: n,
-                        phantom: PhantomData,
                     });
                 } else {
                     node = n.next.load(Ordering::Acquire).as_ref();
@@ -76,7 +73,7 @@ impl LockFreeList {
         Some(self.insert_fresh_node(value))
     }
 
-    fn insert_fresh_node(&self, value: *mut T) -> NodeGuard<'_, T> {
+    fn insert_fresh_node(&self, value: usize) -> NodeGuard<'_> {
         let node = Box::new(RawNode {
             next: AtomicPtr::default(),
             value: value.into(),
@@ -99,7 +96,6 @@ impl LockFreeList {
                     return unsafe {
                         NodeGuard {
                             node: &*node,
-                            phantom: PhantomData,
                         }
                     };
                 }
@@ -167,9 +163,7 @@ mod tests {
         let n1 = a.get_node::<isize>(&v1 as _).unwrap();
         let n2 = a.get_node::<isize>(&v2 as _).unwrap();
 
-        unsafe {
-            assert_ne!(*n1.load(Ordering::Relaxed), *n2.load(Ordering::Relaxed));
-        }
+        assert_ne!(n1.load(Ordering::Relaxed), n2.load(Ordering::Relaxed));
     }
 
     #[test]
