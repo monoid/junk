@@ -259,6 +259,9 @@ mod tests {
 
     #[test]
     fn test_multi_heavy() {
+        #[cfg(miri)]
+        const N: usize = 100;
+        #[cfg(not(miri))]
         const N: usize = 1000000;
 
         let a = Arc::new(LockFreeList::new());
