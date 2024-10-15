@@ -1,4 +1,4 @@
-use fasthash::{city::Hash32, FastHash};
+use cityhasher::hash;
 use sliding_windows::{IterExt, Storage};
 use std::fs::File;
 use std::io::{BufReader, Read as _};
@@ -29,14 +29,14 @@ impl State {
     }
 
     fn push(&mut self, val: u32) {
-        if self.heap_min.iter().find(|v| *v == &val).is_none() {
+        if !self.heap_min.iter().any(|v| *v == val) {
             self.heap_min.push(val);
             if self.heap_min.len() > self.max_size {
                 self.heap_min.pop();
             }
         }
 
-        if self.heap_max.iter().find(|v| v.0 == val).is_none() {
+        if !self.heap_max.iter().any(|v| v.0 == val) {
             self.heap_max.push(Reverse(val));
             if self.heap_max.len() > self.max_size {
                 self.heap_max.pop();
@@ -70,12 +70,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .flat_map(|r| r.ok())
             .sliding_windows(&mut storage)
         {
-            let hash = Hash32::hash_with_seed(
-                &window
+            let hash = hash(
+                window
                     .into_iter()
                     .copied()
                     .collect::<arrayvec::ArrayVec<[u8; WINDOW]>>(),
-                1,
             );
             state.push(hash);
         }

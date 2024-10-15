@@ -8,5 +8,5 @@ edition = "2018"
 
 [dependencies]
 arrayvec = "*"
-fasthash = "*"
+cityhasher = "*"
 sliding_windows = "*"
