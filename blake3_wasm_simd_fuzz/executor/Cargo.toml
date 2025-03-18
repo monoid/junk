@@ -1,0 +1,9 @@
+[package]
+name = "blake3_wasm_executor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+blake3 = "1.6.1"
+quickcheck = "1.0.3"
+wasmtime = "30.0.2"

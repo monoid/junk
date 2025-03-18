@@ -1,0 +1,5 @@
+[workspace]
+members = [
+   "executor",
+   "wasm_module",
+]

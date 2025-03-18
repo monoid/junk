@@ -1,0 +1,10 @@
+[package]
+name = "blake3_wasm_module"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+blake3 = { git = "https://github.com/monoid/BLAKE3.git", branch = "wasm-simd", features = ["wasm32_simd"] }
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
