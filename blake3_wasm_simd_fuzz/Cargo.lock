@@ -75,21 +75,9 @@ checksum = "5c8214115b7bf84099f1309324e63141d4c5d7cc26862f97a0a857dbefe165bd"
 
 [[package]]
 name = "blake3"
-version = "1.6.1"
+version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "675f87afced0413c9bb02843499dbbd3882a237645883f71a2b59644a6d2f753"
-dependencies = [
- "arrayref",
- "arrayvec",
- "cc",
- "cfg-if",
- "constant_time_eq",
-]
-
-[[package]]
-name = "blake3"
-version = "1.6.1"
-source = "git+https://github.com/monoid/BLAKE3.git?branch=wasm-simd#7b5bff62dfe360be16372f38c3a34290c2b1475c"
+checksum = "b17679a8d69b6d7fd9cd9801a536cec9fa5e5970b69f9d4747f70b39b031f5e7"
 dependencies = [
  "arrayref",
  "arrayvec",
@@ -102,7 +90,7 @@ dependencies = [
 name = "blake3_wasm_executor"
 version = "0.1.0"
 dependencies = [
- "blake3 1.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "blake3",
  "quickcheck",
  "wasmtime",
 ]
@@ -111,7 +99,7 @@ dependencies = [
 name = "blake3_wasm_module"
 version = "0.1.0"
 dependencies = [
- "blake3 1.6.1 (git+https://github.com/monoid/BLAKE3.git?branch=wasm-simd)",
+ "blake3",
 ]
 
 [[package]]
