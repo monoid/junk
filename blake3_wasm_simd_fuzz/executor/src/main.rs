@@ -1,7 +1,5 @@
 use quickcheck::{QuickCheck, TestResult};
 
-pub const WASM_BIN_PATH_ENV: &str = "WASM_BIN_PATH";
-
 static mut cnt: usize = 0;
 
 const MAX_TESTS: u64 = 100_000_000_000;
@@ -29,7 +27,12 @@ impl quickcheck::Testable for QcTest {
         let mut wasm = self.wasm.borrow_mut();
         let result = exec(&mut *wasm, &data);
 
-        TestResult::from_bool(&expected.as_bytes()[..] == result.as_slice())
+        let expected = expected.as_bytes();
+        if expected == result.as_slice() {
+            TestResult::passed()
+        } else {
+            TestResult::error(format!("Mismatch on {data:?}: {expected:?} != {result:?}"))
+        }
     }
 }
 
@@ -45,7 +48,9 @@ pub struct Blake3Wasm {
 }
 
 pub fn load() -> Blake3Wasm {
-    let path = std::env::var(WASM_BIN_PATH_ENV).expect("WASM_BIN_PATH variable");
+    let mut args = std::env::args_os();
+    args.next();
+    let path = args.next().expect("one argument with WASM binary path");
     let engine = wasmtime::Engine::default();
     let module = wasmtime::Module::from_file(&engine, path).expect("loading WASM");
     let linker = wasmtime::Linker::new(&engine);
