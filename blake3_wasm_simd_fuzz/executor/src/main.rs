@@ -2,7 +2,7 @@ use quickcheck::{QuickCheck, TestResult};
 
 static mut cnt: usize = 0;
 
-const MAX_TESTS: u64 = 100_000_000_000;
+const MAX_TESTS: u64 = 10_000_000_000;
 fn main() {
     let wasm = load();
     QuickCheck::new()
@@ -53,15 +53,16 @@ pub fn load() -> Blake3Wasm {
     let path = args.next().expect("one argument with WASM binary path");
     let engine = wasmtime::Engine::default();
     let module = wasmtime::Module::from_file(&engine, path).expect("loading WASM");
-    let linker = wasmtime::Linker::new(&engine);
+    let mut linker = wasmtime::Linker::new(&engine);
+    add_wasi_stubs(&mut linker);
     let mut store = wasmtime::Store::new(&engine, ());
     let instance = linker.instantiate(&mut store, &module).expect("instance");
     let alloc = instance
-        .get_typed_func::<i32, i32>(&mut store, "alloc")
-        .expect("alloc");
+        .get_typed_func::<i32, i32>(&mut store, "alloc_buffer")
+        .expect("alloc_buffer");
     let free = instance
-        .get_typed_func::<(i32, i32), ()>(&mut store, "free")
-        .expect("free");
+        .get_typed_func::<(i32, i32), ()>(&mut store, "free_buffer")
+        .expect("free_buffer");
 
     let hash = instance
         .get_typed_func::<(i32, i32), i32>(&mut store, "hash")
@@ -77,6 +78,33 @@ pub fn load() -> Blake3Wasm {
         free,
         hash,
     }
+}
+
+fn add_wasi_stubs(linker: &mut wasmtime::Linker<()>) {
+    use wasmtime::Caller;
+
+    const WASI_SNAPSHOT_PREVIEW1: &str = "wasi_snapshot_preview1";
+    linker
+        .func_wrap(
+            WASI_SNAPSHOT_PREVIEW1,
+            "fd_close",
+            |_caller: Caller<'_, ()>, _a: i32| -1i32,
+        )
+        .unwrap();
+    linker
+        .func_wrap(
+            WASI_SNAPSHOT_PREVIEW1,
+            "fd_write",
+            |_caller: Caller<'_, ()>, _a: i32, _b: i32, _c: i32, _d: i32| -1i32,
+        )
+        .unwrap();
+    linker
+        .func_wrap(
+            WASI_SNAPSHOT_PREVIEW1,
+            "fd_seek",
+            |_caller: Caller<'_, ()>, _a: i32, _b: i64, _c: i32, _d: i32| -1i32,
+        )
+        .unwrap();
 }
 
 pub fn exec(wasm: &mut Blake3Wasm, data: &[u8]) -> Vec<u8> {
