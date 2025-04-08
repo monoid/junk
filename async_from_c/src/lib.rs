@@ -23,8 +23,8 @@ async fn get(url: &str) -> reqwest::Result<reqwest::Response> {
         // Disable the connection pool because it doesn't work well with
         // fork.
         pool_idle_timeout(Some(Duration::from_secs(0)))
-        // Enable Trust-DNS that doens't need the blocking pool.
-        .trust_dns(true)
+        // Enable Hickory-DNS that doens't need the blocking pool.
+        .hickory_dns(true)
         .build()?
         .get(url)
         .send()
@@ -32,7 +32,7 @@ async fn get(url: &str) -> reqwest::Result<reqwest::Response> {
 }
 
 #[no_mangle]
-extern "C" fn query(url: *const c_char) -> *mut c_char {
+unsafe extern "C" fn query(url: *const c_char) -> *mut c_char {
     match unsafe { CStr::from_ptr(url) }.to_str() {
         Ok(url) => {
             let data = RUNTIME.with(|r| {
@@ -69,16 +69,10 @@ extern "C" fn query(url: *const c_char) -> *mut c_char {
 }
 
 #[no_mangle]
-extern "C" fn free_result(data: *mut c_char) {
+unsafe extern "C" fn free_result(data: *mut c_char) {
     if !data.is_null() {
-        unsafe { CString::from_raw(data) };
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
+        unsafe {
+            let _ = CString::from_raw(data);
+        }
     }
 }
