@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use serde_yaml;
 use std::collections::HashSet;
 use std::convert::From;
 use std::fs::File;
@@ -21,7 +20,7 @@ pub struct Config {
 #[derive(Debug)]
 pub enum Error {
     IOError(io::Error),
-    YamlError(serde_yaml::Error),
+    YamlError(serde_yaml_ng::Error),
 }
 
 impl From<io::Error> for Error {
@@ -30,13 +29,13 @@ impl From<io::Error> for Error {
     }
 }
 
-impl From<serde_yaml::Error> for Error {
-    fn from(err: serde_yaml::Error) -> Self {
+impl From<serde_yaml_ng::Error> for Error {
+    fn from(err: serde_yaml_ng::Error) -> Self {
         Error::YamlError(err)
     }
 }
 
 pub fn load_config(path: &Path) -> Result<Config, Error> {
     let mut file = File::open(path)?;
-    return Ok(serde_yaml::from_reader(&mut file)?);
+    return Ok(serde_yaml_ng::from_reader(&mut file)?);
 }
