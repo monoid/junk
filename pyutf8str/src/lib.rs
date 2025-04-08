@@ -3,7 +3,7 @@ use std::ffi::c_void;
 use pyo3::ffi::_Py_HashBytes;
 use pyo3::prelude::*;
 use pyo3::pyclass::CompareOp;
-use pyo3::types::PyUnicode;
+use pyo3::types::PyString;
 
 #[pyclass]
 struct Utf8Str {
@@ -73,10 +73,10 @@ impl Utf8Str {
 
     // Seems to be compatible with Unicode chars.
     #[inline]
-    fn __richcmp__(&self, other: &PyAny, op: CompareOp) -> PyResult<bool> {
-        if let Ok(guard) = other.extract::<&PyCell<Utf8Str>>() {
+    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
+        if let Ok(guard) = other.downcast::<Utf8Str>() {
             return Ok(self.richcmp(guard.borrow().val.as_str(), op));
-        } else if let Ok(uni) = other.cast_as::<PyUnicode>() {
+        } else if let Ok(uni) = other.downcast::<PyString>() {
             return Ok(self.richcmp(uni.to_str()?, op));
         }
         Ok(matches!(op, CompareOp::Ne))
@@ -150,7 +150,7 @@ impl Utf8Str {
 }
 
 #[pymodule]
-pub fn pyutf8str(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn pyutf8str(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Utf8Str>()?;
     Ok(())
 }
