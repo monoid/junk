@@ -40,27 +40,17 @@ mod generator {
     pub(crate) fn prologue(ops: &mut Assembler, frame_words: usize) {
         let frame_bytes: u32 = (frame_words * 4).try_into().unwrap();
 
-        ops.extend(
-            sub(SP, SP, frame_bytes)
-                .unwrap()
-                .represent()
-                .flat_map(|x| x.0),
-        );
+        ops.extend(sub(SP, SP, frame_bytes).unwrap().bytes());
     }
 
     pub(crate) fn body(ops: &mut Assembler) {
-        ops.extend(add(W0, W0, W1).unwrap().represent().flat_map(|x| x.0));
+        ops.extend(add(W0, W0, W1).unwrap().bytes());
     }
 
     pub(crate) fn epiloge(ops: &mut Assembler, frame_words: usize) {
         let frame_bytes: u32 = (frame_words * 4).try_into().unwrap();
 
-        ops.extend(
-            add(SP, SP, frame_bytes)
-                .unwrap()
-                .represent()
-                .flat_map(|x| x.0),
-        );
+        ops.extend(add(SP, SP, frame_bytes).unwrap().bytes());
         ops.extend(ret().represent().flat_map(|x| x.0));
     }
 }

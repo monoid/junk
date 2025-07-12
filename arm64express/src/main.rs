@@ -21,25 +21,16 @@ fn main() {
     println!("{}", node.eval(&env).unwrap());
 
     let node = parser::parse("a+b+c+d+e").unwrap().1;
-    assert_eq!(
-        node.stack_size, 1
-    );
+    assert_eq!(node.stack_size, 1);
 
     let node = parser::parse("a*b*c*d*e").unwrap().1;
-    assert_eq!(
-        node.stack_size, 1
-    );
+    assert_eq!(node.stack_size, 1);
 
     let node = parser::parse("(a+b)+(c+d)*e").unwrap().1;
-    assert_eq!(
-        node.stack_size, 2
-    );
+    assert_eq!(node.stack_size, 2);
 
     let node = parser::parse("a+b+c*d+e").unwrap().1;
-    assert_eq!(
-        node.stack_size, 2
-    );
-
+    assert_eq!(node.stack_size, 2);
 
     let func = Function::new();
     println!("{}", func.call(80, 1));
