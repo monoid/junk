@@ -6,18 +6,19 @@ use crate::{ast::Ast, codegen::Function};
 
 fn main() {
     let node = parser::parse("(((5)+42)*8)").unwrap().1;
+    let env = Default::default();
     assert!(
         matches!(node.ast, Ast::Literal(_)),
         "constant propagation failed",
     );
-    println!("{}", node.eval(&Default::default()).unwrap());
+    println!("{}", node.eval(&env).unwrap());
 
     let node = parser::parse("8-2-2").unwrap().1;
     assert!(
         matches!(node.ast, Ast::Literal(_)),
         "constant propagation failed",
     );
-    println!("{}", node.eval(&Default::default()).unwrap());
+    println!("{}", node.eval(&env).unwrap());
 
     let node = parser::parse("a+b+c+d+e").unwrap().1;
     assert_eq!(

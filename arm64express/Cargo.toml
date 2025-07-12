@@ -6,5 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+armenia = { version = "0.1.0", path = "../../rust/armenia/armenia/armenia" }
 dynasmrt = "2.0.0"
 nom = "7.1.3"

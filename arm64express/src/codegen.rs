@@ -29,31 +29,38 @@ impl Function {
 }
 
 mod generator {
+    use armenia::instructions::arith::add::add;
+    use armenia::instructions::arith::sub::sub;
+    use armenia::instructions::branches::ret;
+    use armenia::instructions::Instruction as _;
+    use armenia::register::Reg32::*;
+    use armenia::register::RegOrSp64::SP;
     use dynasmrt::aarch64::Assembler;
-    use dynasmrt::{dynasm, DynasmApi, DynasmLabelApi};
 
     pub(crate) fn prologue(ops: &mut Assembler, frame_words: usize) {
         let frame_bytes: u32 = (frame_words * 4).try_into().unwrap();
 
-        dynasm!(ops
-                ; .arch aarch64
-                ; -> prologue:
-                ; sub sp, sp, frame_bytes
+        ops.extend(
+            sub(SP, SP, frame_bytes)
+                .unwrap()
+                .represent()
+                .flat_map(|x| x.0),
         );
     }
 
     pub(crate) fn body(ops: &mut Assembler) {
-        dynasm!(ops
-                ; add w0, w0, w1
-        );
+        ops.extend(add(W0, W0, W1).unwrap().represent().flat_map(|x| x.0));
     }
 
     pub(crate) fn epiloge(ops: &mut Assembler, frame_words: usize) {
         let frame_bytes: u32 = (frame_words * 4).try_into().unwrap();
 
-        dynasm!(ops
-                ; add sp, sp, frame_bytes
-                ; ret
+        ops.extend(
+            add(SP, SP, frame_bytes)
+                .unwrap()
+                .represent()
+                .flat_map(|x| x.0),
         );
+        ops.extend(ret().represent().flat_map(|x| x.0));
     }
 }
