@@ -51,6 +51,15 @@ mod generator {
         let frame_bytes: u32 = (frame_words * 4).try_into().unwrap();
 
         ops.extend(add(SP, SP, frame_bytes).unwrap().bytes());
-        ops.extend(ret().represent().flat_map(|x| x.0));
+        ops.extend(ret().bytes());
+    }
+
+    pub(crate) fn full(ops: &mut Assembler, frame_words: usize) {
+        let frame_bytes: u32 = (frame_words * 4).try_into().unwrap();
+
+        ops.extend(sub(SP, SP, frame_bytes).unwrap().bytes());
+        ops.extend(add(W0, W0, W1).unwrap().bytes());
+        ops.extend(add(SP, SP, frame_bytes).unwrap().bytes());
+        ops.extend(ret().bytes());
     }
 }
