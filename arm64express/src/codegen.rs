@@ -29,12 +29,12 @@ impl Function {
 }
 
 mod generator {
-    use armenia::instructions::arith::add::add;
-    use armenia::instructions::arith::sub::sub;
-    use armenia::instructions::branches::ret;
-    use armenia::instructions::Instruction as _;
-    use armenia::register::Reg32::*;
-    use armenia::register::RegOrSp64::SP;
+    use harm::instructions::arith::add::add;
+    use harm::instructions::arith::sub::sub;
+    use harm::instructions::branches::ret;
+    use harm::instructions::Instruction as _;
+    use harm::register::Reg32::*;
+    use harm::register::RegOrSp64::SP;
     use dynasmrt::aarch64::Assembler;
 
     pub(crate) fn prologue(ops: &mut Assembler, frame_words: usize) {
