@@ -6,4 +6,4 @@ edition = "2024"
 [dependencies]
 blake3 = "1.6.1"
 quickcheck = "1.0.3"
-wasmtime = "36.0.3"
+wasmtime = "41.0.1"
