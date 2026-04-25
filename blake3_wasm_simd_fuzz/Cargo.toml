@@ -3,3 +3,5 @@ members = [
    "executor",
    "wasm_module",
 ]
+
+resolver = "3"
