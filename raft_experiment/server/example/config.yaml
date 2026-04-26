@@ -1,8 +1,0 @@
-http_port: 8000
-raft_port: 8080
-nodes:
-        - node1
-        - node2
-        - node3
-raft_config:
-        cluster_name: "test"
