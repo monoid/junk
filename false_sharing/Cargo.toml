@@ -1,0 +1,11 @@
+[package]
+name = "false_sharing"
+version = "0.1.0"
+edition = "2024"
+
+[target.'cfg(target_arch="x86_64")'.dependencies]
+affinity = "0.1.2"
+
+[features]
+cache_line_64 = []
+cache_line_128 = []
