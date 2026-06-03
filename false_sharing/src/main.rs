@@ -41,23 +41,28 @@ impl AddSub {
 
 fn main() {
     let data = Vec::from_iter(std::iter::repeat_with(|| AddSub::default()).take(SIZE));
-    let addsub: Arc<[AddSub]> = data.into();
-    let addsub1 = addsub.clone();
-    let addsub2 = addsub.clone();
+    let addsub: Box<[AddSub]> = data.into();
+    let addsub = &*Box::leak(addsub);
 
     let t1 = std::thread::spawn(move || {
         #[cfg(target_arch = "x86_64")]
         affinity::set_thread_affinity(&[0]).unwrap();
-        for i in 0..N {
-            addsub1[i % SIZE].add.fetch_add(i as u64, ORDERING);
+
+        for _ in 0..(N / SIZE) {
+            for elt in addsub {
+                elt.add.fetch_add(1 as u64, ORDERING);
+            }
         }
     });
     let t2 = std::thread::spawn(move || {
         #[cfg(target_arch = "x86_64")]
         // Not 1! Core 1 is a virtual core of the same physical one.
         affinity::set_thread_affinity(&[2]).unwrap();
-        for i in 0..N {
-            addsub2[i % SIZE].sub.fetch_add(i as u64, ORDERING);
+
+        for _ in 0..(N / SIZE) {
+            for elt in addsub {
+                elt.sub.fetch_add(1 as u64, ORDERING);
+            }
         }
     });
     t1.join().unwrap();
