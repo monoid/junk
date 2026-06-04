@@ -1,7 +1,6 @@
 mod params;
 
 use std::ops::Deref;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use params::{N, SIZE};
@@ -50,7 +49,7 @@ fn main() {
 
         for _ in 0..(N / SIZE) {
             for elt in addsub {
-                elt.add.fetch_add(1 as u64, ORDERING);
+                elt.add.fetch_add(1u64, ORDERING);
             }
         }
     });
@@ -61,7 +60,7 @@ fn main() {
 
         for _ in 0..(N / SIZE) {
             for elt in addsub {
-                elt.sub.fetch_add(1 as u64, ORDERING);
+                elt.sub.fetch_add(1u64, ORDERING);
             }
         }
     });
