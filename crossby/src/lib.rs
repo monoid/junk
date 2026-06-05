@@ -6,6 +6,37 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 const RECORD_SIZE: usize = 64;
 
+pub struct OwningCollector<T> {
+    // Collector must be first, so that deferred callbacks are executed before data is dropped.
+    collector: epoch::Collector,
+    data: T,
+}
+
+impl<T> OwningCollector<T> {
+    pub fn new(data: T) -> Self {
+        Self {
+            collector: epoch::Collector::new(),
+            data,
+        }
+    }
+
+    pub fn as_ref(&self) -> &T {
+        &self.data
+    }
+
+    pub fn register(&self) -> epoch::LocalHandle {
+        self.collector.register()
+    }
+
+    pub fn pin(&self) -> Guard {
+        self.collector.register().pin()
+    }
+
+    pub fn into_inner(self) -> T {
+        self.data
+    }
+}
+
 struct Slot {
     data: UnsafeCell<[u8; RECORD_SIZE]>,
     alive: AtomicBool,
@@ -14,17 +45,15 @@ struct Slot {
 unsafe impl Sync for Slot {}
 unsafe impl Send for Slot {}
 
-pub struct Storage {
+struct StorageInner {
     slots: Vec<Slot>,
-    len: AtomicUsize,          // logical end (только растёт)
-    freelist: SegQueue<usize>, // индексы, безопасные для переиспользования
+    freelist: SegQueue<usize>,
 }
 
-// impl Drop for Storage {
-//     fn drop(&mut self) {
-//         crossbeam_epoch::pin().repin();
-//     }
-// }
+pub struct Storage {
+    inner: OwningCollector<StorageInner>,
+    len: AtomicUsize,          // logical end (только растёт)
+}
 
 impl Storage {
     pub fn new(capacity: usize) -> Self {
@@ -36,24 +65,26 @@ impl Storage {
             });
         }
         Self {
-            slots,
+            inner: OwningCollector::new(StorageInner {
+                slots,
+                freelist: SegQueue::new(),
+            }),
             len: AtomicUsize::new(0),
-            freelist: SegQueue::new(),
         }
     }
 
     /// Запись. Guard нужен чтобы freelist.pop() видел только безопасные слоты.
     pub fn insert(&self, data: &[u8; RECORD_SIZE], _guard: &Guard) -> usize {
-        let index = if let Some(idx) = self.freelist.pop() {
+        let index = if let Some(idx) = self.inner.as_ref().freelist.pop() {
             idx
         } else {
             self.len.fetch_add(1, Ordering::Relaxed)
         };
 
         unsafe {
-            (*self.slots[index].data.get()).copy_from_slice(data);
+            (*self.inner.as_ref().slots[index].data.get()).copy_from_slice(data);
         }
-        self.slots[index].alive.store(true, Ordering::Release);
+        self.inner.as_ref().slots[index].alive.store(true, Ordering::Release);
         index
     }
 
@@ -61,10 +92,10 @@ impl Storage {
     /// текущие читатели (держащие Guard) завершат свою эпоху.
     pub fn delete(&self, index: usize, guard: &Guard) {
         // Логически удаляем сразу — новые читатели пропустят слот
-        self.slots[index].alive.store(false, Ordering::Release);
+        self.inner.as_ref().slots[index].alive.store(false, Ordering::Release);
 
         // Физически возвращаем в freelist — отложено до смены эпохи
-        let freelist = &self.freelist as *const SegQueue<usize>;
+        let freelist = &self.inner.as_ref().freelist as *const SegQueue<usize>;
         unsafe {
             guard.defer_unchecked(move || {
                 (*freelist).push(index);
@@ -76,13 +107,13 @@ impl Storage {
     /// Последовательное чтение. Pin гарантирует, что удалённые в процессе
     /// чтения слоты не попадут в freelist и не будут перезаписаны.
     pub fn scan(&self, mut f: impl FnMut(usize, &[u8; RECORD_SIZE])) {
-        let guard = epoch::pin();
+        let guard = self.inner.pin();
         let len = self.len.load(Ordering::Acquire);
 
         for i in 0..len {
             // Acquire: если видим true, гарантированно видим записанные данные
-            if self.slots[i].alive.load(Ordering::Acquire) {
-                let data = unsafe { &*self.slots[i].data.get() };
+            if self.inner.as_ref().slots[i].alive.load(Ordering::Acquire) {
+                let data = unsafe { &*self.inner.as_ref().slots[i].data.get() };
                 f(i, data);
             }
         }
@@ -92,6 +123,10 @@ impl Storage {
 
     pub fn len(&self) -> usize {
         self.len.load(Ordering::Acquire)
+    }
+
+    pub fn pin(&self) -> Guard {
+        self.inner.pin()
     }
 }
 
@@ -103,7 +138,7 @@ mod tests {
     #[test]
     fn test_basic() {
         use rayon::prelude::*;
-        
+
         const SIZE: usize = 640;
         const COUNT: usize = 100;
 
@@ -111,7 +146,7 @@ mod tests {
             let storage = Storage::new(SIZE);
 
             {
-                let guard = epoch::pin();
+                let guard = storage.pin();
                 for i in 0..SIZE / 20 {
                     storage.insert(&[i as u8; 64], &guard);
                 }
@@ -119,7 +154,7 @@ mod tests {
 
             std::thread::scope(|s| {
                 s.spawn(|| {
-                    let guard = epoch::pin();
+                    let guard = storage.pin();
                     let data = [0u8; 64];
                     for _ in 0..100 {
                         storage.insert(&data, &guard);
@@ -130,7 +165,7 @@ mod tests {
                     let mut rnd = rand::rng();
                     for _ in 0..COUNT {
                         let idx = rnd.random_range(0..SIZE);
-                        let guard = epoch::pin();
+                        let guard = storage.pin();
                         storage.delete(idx, &guard);
                     }
                 });

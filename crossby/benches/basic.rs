@@ -12,7 +12,7 @@ pub fn basic_bench(c: &mut Criterion) {
             let storage = Storage::new(size);
 
             {
-                let guard = crossby::epoch::pin();
+                let guard = storage.pin();
                 for i in 0..size / 20 {
                     storage.insert(&[i as u8; 64], &guard);
                 }
@@ -20,7 +20,7 @@ pub fn basic_bench(c: &mut Criterion) {
 
             std::thread::scope(|s| {
                 s.spawn(|| {
-                    let guard = crossby::epoch::pin();
+                    let guard = storage.pin();
                     let data = [0u8; 64];
                     for _ in 0..100 {
                         storage.insert(&data, &guard);
@@ -31,7 +31,7 @@ pub fn basic_bench(c: &mut Criterion) {
                     let mut rnd = rand::rng();
                     for _ in 0..COUNT {
                         let idx = rnd.random_range(0..size);
-                        let guard = crossby::epoch::pin();
+                        let guard = storage.pin();
                         storage.delete(idx, &guard);
                     }
                 });
