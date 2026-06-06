@@ -4,7 +4,7 @@ use crossbeam_queue::SegQueue;
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-const RECORD_SIZE: usize = 64;
+pub const RECORD_SIZE: usize = 64;
 
 pub struct OwningCollector<T> {
     // Collector must be first, so that deferred callbacks are executed before data is dropped.
@@ -37,9 +37,9 @@ impl<T> OwningCollector<T> {
     }
 }
 
-struct Slot {
-    data: UnsafeCell<[u8; RECORD_SIZE]>,
-    alive: AtomicBool,
+pub struct Slot {
+    pub data: UnsafeCell<[u8; RECORD_SIZE]>,
+    pub alive: AtomicBool,
 }
 
 unsafe impl Sync for Slot {}
