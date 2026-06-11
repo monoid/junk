@@ -1,21 +1,24 @@
 use criterion::*;
-use crossby::{Slot, Storage, RECORD_SIZE};
+use crossby::{RECORD_SIZE, Slot, Storage};
 use parking_lot::RwLock;
 use rand::RngExt as _;
+use std::cell::UnsafeCell;
 use std::hint::black_box;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::cell::UnsafeCell;
+
+const READES: usize = 20;
 
 pub fn basic_bench(c: &mut Criterion) {
     let size = 640;
     const COUNT: usize = 1000;
 
-    c.bench_function("basic", |b| {
+    c.bench_function("epoch", |b| {
         b.iter(|| {
             let storage = Storage::new(size);
+            let handle = storage.register();
 
             {
-                let guard = storage.pin();
+                let guard = handle.pin();
                 for i in 0..size / 20 {
                     storage.insert(&[i as u8; 64], &guard);
                 }
@@ -23,47 +26,44 @@ pub fn basic_bench(c: &mut Criterion) {
 
             std::thread::scope(|s| {
                 s.spawn(|| {
-                    let guard = storage.pin();
+                    let handle = storage.register();
                     let data = [0u8; 64];
                     for _ in 0..size - size / 20 {
+                        let guard = handle.pin();
                         storage.insert(&data, &guard);
                     }
                 });
 
                 s.spawn(|| {
                     let mut rnd = rand::rng();
-                    for _ in 0..10*COUNT {
+                    let handle = storage.register();
+                    for _ in 0..10 * COUNT {
                         let idx = rnd.random_range(0..size);
-                        let guard = storage.pin();
+                        let guard = handle.pin();
                         storage.delete(idx, &guard);
                     }
                 });
 
-                s.spawn(|| {
-                    for _ in 0..COUNT {
-                        let mut sum = 0;
-                        storage.scan(|_, data| {
-                            for byte in data {
-                                sum += *byte as usize;
-                            }
-                        });
-                        black_box(sum);
-                    }
-                });
-                s.spawn(|| {
-                    for _ in 0..COUNT {
-                        let mut sum = 0;
-                        storage.scan(|_, data| {
-                            for byte in data {
-                                sum += *byte as usize;
-                            }
-                        });
-                        black_box(sum);
-                    }
-                });
+                for _ in 0..READES {
+                    s.spawn(|| {
+                        let handle = storage.register();
+                        for _ in 0..COUNT {
+                            let mut sum = 0;
+                            storage.scan(
+                                |_, data| {
+                                    for byte in data {
+                                        sum += *byte as usize;
+                                    }
+                                },
+                                &handle,
+                            );
+                            black_box(sum);
+                        }
+                    });
+                }
             });
 
-            crossby::epoch::pin().flush();
+            handle.pin().flush();
             std::mem::drop(storage);
         })
     });
@@ -162,35 +162,26 @@ fn mutex_bench(c: &mut Criterion) {
 
                 s.spawn(|| {
                     let mut rnd = rand::rng();
-                    for _ in 0..10*COUNT {
+                    for _ in 0..10 * COUNT {
                         let len = storage.len();
                         let idx = rnd.random_range(0..len);
                         storage.delete(idx);
                     }
                 });
 
-                s.spawn(|| {
-                    for _ in 0..COUNT {
-                        let mut sum = 0;
-                        storage.scan(|_, data| {
-                            for byte in data {
-                                sum += *byte as usize;
-                            }
-                        });
-                        black_box(sum);
-                    }
-                });
-                s.spawn(|| {
-                    for _ in 0..COUNT {
-                        let mut sum = 0;
-                        storage.scan(|_, data| {
-                            for byte in data {
-                                sum += *byte as usize;
-                            }
-                        });
-                        black_box(sum);
-                    }
-                });
+                for _ in 0..READES {
+                    s.spawn(|| {
+                        for _ in 0..COUNT {
+                            let mut sum = 0;
+                            storage.scan(|_, data| {
+                                for byte in data {
+                                    sum += *byte as usize;
+                                }
+                            });
+                            black_box(sum);
+                        }
+                    });
+                }
             });
 
             std::mem::drop(storage);
