@@ -86,11 +86,17 @@ impl Storage {
         index
     }
 
-    pub fn delete(&self, index: usize, guard: &Guard) {
+    pub fn delete(&self, index: usize, guard: &Guard) -> bool {
         // Immediately remove logically: new readers will skip the slot.
-        self.inner.as_ref().slots[index]
-            .alive
-            .store(false, Ordering::Release);
+        if self.inner.as_ref().slots[index].alive.compare_exchange(
+            true,
+            false,
+            Ordering::Release,
+            Ordering::Relaxed,
+        ).is_err() {
+            // Already deleted, do nothing.
+            return false;
+        }
 
         // Adding to the freelist is deferred until change of epoch.
         let freelist = &self.inner.as_ref().freelist as *const SegQueue<usize>;
@@ -99,6 +105,7 @@ impl Storage {
                 (*freelist).push(index);
             });
         }
+        true
     }
 
     /// Последовательное чтение. Pin гарантирует, что удалённые в процессе

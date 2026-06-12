@@ -78,6 +78,7 @@ struct StorageRwLockInner {
     freelist: Vec<usize>,
     len: usize,
 }
+
 impl StorageRwLock {
     pub fn new(capacity: usize) -> Self {
         let mut slots = Vec::with_capacity(capacity);
@@ -115,12 +116,20 @@ impl StorageRwLock {
         index
     }
 
-    pub fn delete(&self, index: usize) {
+    pub fn delete(&self, index: usize) -> bool {
         let mut guard = self.inner.write();
 
         // Логически удаляем сразу — новые читатели пропустят слот
-        guard.slots[index].alive.store(false, Ordering::Relaxed);
+        if guard.slots[index]
+            .alive
+            .compare_exchange(true, false, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+        {
+            return false;
+        }
+
         guard.freelist.push(index);
+        true
     }
 
     pub fn scan(&self, mut f: impl FnMut(usize, &[u8; RECORD_SIZE])) {
