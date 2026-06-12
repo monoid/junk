@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 
-use pyo3::ffi::_Py_HashBytes;
+use pyo3::ffi::compat::Py_HashBuffer as _Py_HashBytes;
 use pyo3::prelude::*;
 use pyo3::pyclass::CompareOp;
 use pyo3::types::PyString;
@@ -74,9 +74,9 @@ impl Utf8Str {
     // Seems to be compatible with Unicode chars.
     #[inline]
     fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
-        if let Ok(guard) = other.downcast::<Utf8Str>() {
+        if let Ok(guard) = other.cast::<Utf8Str>() {
             return Ok(self.richcmp(guard.borrow().val.as_str(), op));
-        } else if let Ok(uni) = other.downcast::<PyString>() {
+        } else if let Ok(uni) = other.cast::<PyString>() {
             return Ok(self.richcmp(uni.to_str()?, op));
         }
         Ok(matches!(op, CompareOp::Ne))
