@@ -38,7 +38,8 @@ pub fn basic_bench(c: &mut Criterion) {
                     let mut rnd = rand::rng();
                     let handle = storage.register();
                     for _ in 0..10 * COUNT {
-                        let idx = rnd.random_range(0..size);
+                        let len = storage.len();
+                        let idx = rnd.random_range(0..len);
                         let guard = handle.pin();
                         storage.delete(idx, &guard);
                     }
